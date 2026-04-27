@@ -44,12 +44,22 @@ export default function Home() {
   };
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-[#09090b] text-white flex flex-col items-center justify-center p-6">
+    <div className="relative min-h-screen w-full overflow-hidden bg-[#09090b] text-white flex flex-col items-center justify-center p-4 sm:p-6">
       {/* Background Decorative Blobs */}
-      <div className="absolute top-[-10%] left-[-10%] h-[500px] w-[500px] rounded-full bg-purple-600/10 blur-[120px]" />
-      <div className="absolute bottom-[-10%] right-[-10%] h-[500px] w-[500px] rounded-full bg-blue-600/10 blur-[120px]" />
+      <div className="absolute top-[-10%] left-[-10%] h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] rounded-full bg-purple-600/10 blur-[120px]" />
+      <div className="absolute bottom-[-10%] right-[-10%] h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] rounded-full bg-blue-600/10 blur-[120px]" />
 
-      <main className="relative z-10 w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+      {/* Mobile-only compact branding */}
+      <div className="lg:hidden flex items-center gap-3 mb-8 z-10">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-purple-600 to-blue-500 shadow-xl shadow-purple-500/20">
+          <MessageCircle size={22} className="text-white" />
+        </div>
+        <h1 className="text-3xl font-black tracking-tighter">
+          Insta<span className="bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">Chat</span>
+        </h1>
+      </div>
+
+      <main className="relative z-10 w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-center">
         
         {/* Left Side: Branding & Features */}
         <div className="hidden lg:flex flex-col space-y-12">
@@ -86,7 +96,7 @@ export default function Home() {
             animate={{ opacity: 1, scale: 1 }}
             className="w-full max-w-md mx-auto"
         >
-            <div className="bg-white/[0.03] backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-8 md:p-10 shadow-2xl">
+            <div className="bg-white/[0.03] backdrop-blur-2xl border border-white/10 rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 md:p-10 shadow-2xl">
                 
                 {/* Mode Switcher */}
                 <div className="flex bg-black/40 p-1.5 rounded-2xl mb-8 relative">
@@ -199,7 +209,7 @@ export default function Home() {
         </motion.div>
       </main>
 
-      <footer className="mt-20 text-zinc-600 text-xs uppercase tracking-widest font-medium">
+      <footer className="mt-10 lg:mt-20 text-zinc-600 text-xs uppercase tracking-widest font-medium text-center">
           © 2026 InstaChat. Built for the next generation.
       </footer>
     </div>

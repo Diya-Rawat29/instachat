@@ -20,11 +20,15 @@ const ICE_SERVERS = {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:openrelay.metered.ca:80" },
-    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+    // Free TURN from open-relay (fallback for symmetric NAT)
+    { urls: "turn:openrelay.metered.ca:80",            username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443",           username: "openrelayproject", credential: "openrelayproject" },
     { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:80?transport=udp",  username: "openrelayproject", credential: "openrelayproject" },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export default function Dashboard() {
@@ -54,13 +58,15 @@ export default function Dashboard() {
   // WebRTC refs
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
-  const pendingCandidates = useRef([]);
+  const pendingIceCandidates = useRef([]);   // ICE only (not offer)
+  const pendingOfferSdp = useRef(null);      // stored offer SDP from caller
   const isInitiator = useRef(false);
   const callFromRef = useRef(null);
   const callTypeRef = useRef("video");
   const callStateRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const cleanupCallRef = useRef(null);       // stable ref to avoid stale closures
 
   useEffect(() => { callStateRef.current = callState; }, [callState]);
 
@@ -85,39 +91,48 @@ export default function Dashboard() {
     sock.on("connect_error", () => setSocketConnected(false));
 
     sock.on("incoming-call", ({ signal, from, name, callType }) => {
-      if (callStateRef.current) return;
+      if (callStateRef.current) return; // already in a call
       callFromRef.current = from;
       callTypeRef.current = callType || "video";
       setCallerName(name);
       setIsAudioOnly(callType === "audio");
       setCallTarget({ uid: from, name });
       setCallState("incoming");
-      if (signal.type === "offer") {
-        pendingCandidates.current = [{ isOffer: true, sdp: signal.sdp }];
+      // Store the offer SDP separately so ICE candidates don't mix with it
+      if (signal?.type === "offer") {
+        pendingOfferSdp.current = signal.sdp;
       }
     });
 
     sock.on("call-accepted", async ({ signal }) => {
-      if (!pcRef.current || signal.type !== "answer") return;
+      if (!pcRef.current || signal?.type !== "answer") return;
       try {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: signal.sdp }));
-        for (const c of pendingCandidates.current) {
+        await pcRef.current.setRemoteDescription(
+          new RTCSessionDescription({ type: "answer", sdp: signal.sdp })
+        );
+        // Flush any ICE candidates that arrived before remote description was set
+        for (const c of pendingIceCandidates.current) {
           await pcRef.current.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
         }
-        pendingCandidates.current = [];
-        setCallState("connected");
-      } catch (err) { console.error("setRemoteDescription failed:", err); }
+        pendingIceCandidates.current = [];
+        // Don't setCallState("connected") here — wait for onconnectionstatechange
+      } catch (err) { console.error("[WebRTC] setRemoteDescription(answer) failed:", err); }
     });
 
     sock.on("ice-candidate", async ({ candidate }) => {
-      if (pcRef.current?.remoteDescription) {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+      if (!candidate) return;
+      if (pcRef.current?.remoteDescription?.type) {
+        // Remote description already set — add immediately
+        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch((e) =>
+          console.warn("[ICE] addIceCandidate failed:", e)
+        );
       } else {
-        pendingCandidates.current.push(candidate);
+        // Queue until setRemoteDescription is called
+        pendingIceCandidates.current.push(candidate);
       }
     });
 
-    sock.on("call-ended", () => cleanupCall());
+    sock.on("call-ended", () => cleanupCallRef.current?.());
 
     return () => sock.disconnect();
   }, [user]); // eslint-disable-line
@@ -157,18 +172,56 @@ export default function Dashboard() {
 
   // ── WebRTC helpers ──
   const createPeerConnection = useCallback((toUid) => {
+    // Close any existing peer connection first
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
+
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate) socketRef.current?.emit("ice-candidate", { candidate, to: toUid });
+      if (candidate) {
+        socketRef.current?.emit("ice-candidate", { candidate, to: toUid });
+      }
     };
+
     pc.ontrack = (event) => {
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+      console.log("[WebRTC] Remote track received:", event.track.kind);
+      if (remoteVideoRef.current && event.streams?.[0]) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
     };
+
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "connected") setCallState("connected");
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") cleanupCall();
+      console.log("[WebRTC] Connection state:", pc.connectionState);
+      if (pc.connectionState === "connected") {
+        setCallState("connected");
+      }
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+        cleanupCallRef.current?.();
+      }
     };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("[ICE] Connection state:", pc.iceConnectionState);
+      if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+        setCallState("connected");
+      }
+      if (pc.iceConnectionState === "failed") {
+        console.warn("[ICE] Failed — attempting ICE restart");
+        pc.restartIce();
+      }
+      if (pc.iceConnectionState === "disconnected") {
+        // Give a moment before cleanup (could be transient)
+        setTimeout(() => {
+          if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+            cleanupCallRef.current?.();
+          }
+        }, 4000);
+      }
+    };
+
     return pc;
   }, []);
 
@@ -185,21 +238,34 @@ export default function Dashboard() {
     const chat = targetChat || selectedChat;
     if (!chat) return;
     if (!socketRef.current?.connected) {
-      alert("Connecting to server... Please wait a moment and try again.");
+      alert("Not connected to server. Please wait a moment and try again.");
       return;
     }
+    if (callStateRef.current) return; // already in a call
+
     const isVideo = type === "video";
     callTypeRef.current = type;
     isInitiator.current = true;
     setIsAudioOnly(!isVideo);
     setCallTarget(chat);
     setCallState("calling");
+    pendingIceCandidates.current = [];
+    pendingOfferSdp.current = null;
     sendSystemMsg(chat, isVideo ? "🎥 Video Call Started" : "📞 Voice Call Started");
 
     try {
+      // Try requested constraints, fall back to audio-only if camera unavailable
       let stream;
-      try { stream = await navigator.mediaDevices.getUserMedia({ video: isVideo, audio: true }); }
-      catch { stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true }); }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: isVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } : false,
+          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 },
+        });
+      } catch {
+        console.warn("[Media] Falling back to audio-only");
+        stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+        setIsAudioOnly(true);
+      }
 
       localStreamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
@@ -207,7 +273,11 @@ export default function Dashboard() {
       const pc = createPeerConnection(chat.uid);
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-      const offer = await pc.createOffer();
+      // Create offer with specific constraints for cross-device compatibility
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: isVideo,
+      });
       await pc.setLocalDescription(offer);
 
       socketRef.current?.emit("call-user", {
@@ -215,25 +285,41 @@ export default function Dashboard() {
         from: user.uid,
         name: user.displayName || user.email,
         callType: type,
-        signal: { type: "offer", sdp: offer.sdp },
+        signal: { type: "offer", sdp: pc.localDescription.sdp }, // use localDescription (may be modified)
       });
     } catch (err) {
-      console.error("Call failed:", err);
-      alert("Could not access camera/microphone. Please allow permissions.");
+      console.error("[Call] initiateCall failed:", err);
+      alert("Could not access camera/microphone. Please allow permissions and try again.");
       setCallState(null);
     }
   };
 
   const acceptCall = async () => {
-    setCallState("connected");
+    // Don't set 'connected' yet — wait for ICE/connection state
+    setCallState("connecting");
     sendSystemMsg(null, callTypeRef.current === "video" ? "🎥 Video Call Connected" : "📞 Voice Call Connected");
     isInitiator.current = false;
+
+    const offerSdp = pendingOfferSdp.current;
+    if (!offerSdp) {
+      console.error("[Call] No offer SDP stored — cannot accept");
+      cleanupCallRef.current?.();
+      return;
+    }
 
     try {
       const isVideo = callTypeRef.current === "video";
       let stream;
-      try { stream = await navigator.mediaDevices.getUserMedia({ video: isVideo, audio: true }); }
-      catch { stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true }); }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: isVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } : false,
+          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 },
+        });
+      } catch {
+        console.warn("[Media] Falling back to audio-only");
+        stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+        setIsAudioOnly(true);
+      }
 
       localStreamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
@@ -241,40 +327,50 @@ export default function Dashboard() {
       const pc = createPeerConnection(callFromRef.current);
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-      const offerData = pendingCandidates.current.find(c => c.isOffer);
-      pendingCandidates.current = pendingCandidates.current.filter(c => !c.isOffer);
-      if (!offerData) { cleanupCall(); return; }
+      // Set the stored offer as remote description
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: offerSdp }));
 
-      await pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: offerData.sdp }));
-      for (const c of pendingCandidates.current) {
-        await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+      // Flush any ICE candidates that arrived before we accepted
+      for (const c of pendingIceCandidates.current) {
+        await pc.addIceCandidate(new RTCIceCandidate(c)).catch((e) =>
+          console.warn("[ICE] flush candidate failed:", e)
+        );
       }
-      pendingCandidates.current = [];
+      pendingIceCandidates.current = [];
+      pendingOfferSdp.current = null;
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
       socketRef.current?.emit("answer-call", {
         to: callFromRef.current,
-        signal: { type: "answer", sdp: answer.sdp },
+        signal: { type: "answer", sdp: pc.localDescription.sdp },
       });
     } catch (err) {
-      console.error("Accept call failed:", err);
-      cleanupCall();
+      console.error("[Call] acceptCall failed:", err);
+      cleanupCallRef.current?.();
     }
   };
 
-  const cleanupCall = () => {
-    localStreamRef.current?.getTracks().forEach(t => t.stop());
+  const cleanupCall = useCallback(() => {
+    console.log("[Call] Cleaning up call");
+    try { localStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
     localStreamRef.current = null;
-    if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
+    try { if (pcRef.current) { pcRef.current.close(); pcRef.current = null; } } catch {}
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    pendingCandidates.current = [];
+    pendingIceCandidates.current = [];
+    pendingOfferSdp.current = null;
     isInitiator.current = false;
     callFromRef.current = null;
-    setCallState(null); setIsMuted(false); setIsVideoOff(false); setCallTarget(null);
-  };
+    setCallState(null);
+    setIsMuted(false);
+    setIsVideoOff(false);
+    setCallTarget(null);
+  }, []);
+
+  // Keep cleanupCallRef always pointing to latest cleanupCall
+  useEffect(() => { cleanupCallRef.current = cleanupCall; }, [cleanupCall]);
 
   const endCall = () => {
     const toUid = isInitiator.current ? callTarget?.uid : callFromRef.current;
@@ -319,11 +415,11 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="flex h-screen bg-[#09090b] text-white overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#09090b] text-white overflow-hidden">
       {!profileData?.username && <CompleteProfileModal />}
 
-      {/* Nav Sidebar */}
-      <nav className={`flex-shrink-0 flex w-14 md:w-20 flex-col items-center justify-between border-r border-white/5 bg-black py-6 ${selectedChat ? "hidden md:flex" : "flex"}`}>
+      {/* Nav Sidebar — hidden on mobile, visible md+ */}
+      <nav className="hidden md:flex flex-shrink-0 w-14 md:w-20 flex-col items-center justify-between border-r border-white/5 bg-black py-6">
         <div className="flex flex-col gap-6 items-center">
           <div className="h-8 w-8 md:h-10 md:w-10 flex items-center justify-center rounded-xl bg-gradient-to-tr from-purple-600 to-blue-500">
             <MessageSquare size={18} />
@@ -345,8 +441,8 @@ export default function Dashboard() {
       </nav>
 
       {/* Chat List Sidebar */}
-      <aside className={`flex-shrink-0 flex-col border-r border-white/5 bg-[#09090b] w-full md:w-72 lg:w-80 ${selectedChat ? "hidden md:flex" : "flex"}`}>
-        <header className="flex flex-col p-4 gap-4">
+      <aside className={`flex-shrink-0 flex-col border-r border-white/5 bg-[#09090b] w-full md:w-72 lg:w-80 ${(selectedChat || activeTab === "settings") ? "hidden md:flex" : "flex"}`}>
+        <header className="flex flex-col p-4 gap-4 flex-shrink-0">
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-bold capitalize">{activeTab}</h1>
             <button onClick={() => setIsSearchOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-600 hover:bg-purple-700">
@@ -359,7 +455,7 @@ export default function Dashboard() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-3 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-3 pb-20 md:pb-4 custom-scrollbar">
           {incomingRequests.length > 0 && (
             <div className="mb-4">
               <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-2 flex items-center gap-1 px-1"><Bell size={11} /> Requests</p>
@@ -400,7 +496,7 @@ export default function Dashboard() {
       </aside>
 
       {/* Main Area */}
-      <section className={`flex-1 flex flex-col bg-[#0c0c0e] min-w-0 overflow-hidden ${selectedChat ? "flex" : "hidden md:flex"}`}>
+      <section className={`flex-1 flex flex-col bg-[#0c0c0e] min-w-0 overflow-hidden ${selectedChat || activeTab === "settings" ? "flex" : "hidden md:flex"}`}>
         {activeTab === "settings" ? (
           <SettingsPanel />
         ) : selectedChat ? (
@@ -423,7 +519,42 @@ export default function Dashboard() {
         )}
       </section>
 
-      {/* ─── GLOBAL CALL OVERLAY ─── */}
+      {/* Mobile Bottom Navigation */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around bg-black/90 backdrop-blur-xl border-t border-white/10 py-3 px-4 safe-area-bottom">
+        <button
+          onClick={() => { setActiveTab("chats"); setSelectedChat(null); }}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "chats" && !selectedChat ? "text-purple-400" : "text-zinc-500"}`}
+        >
+          <MessageSquare size={22} />
+          <span className="text-[10px] font-medium">Chats</span>
+        </button>
+        <button
+          onClick={() => { setActiveTab("connections"); setSelectedChat(null); }}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "connections" ? "text-purple-400" : "text-zinc-500"}`}
+        >
+          <Users size={22} />
+          <span className="text-[10px] font-medium">People</span>
+        </button>
+        <button
+          onClick={() => setIsSearchOpen(true)}
+          className="flex flex-col items-center gap-1 text-zinc-500"
+        >
+          <Search size={22} />
+          <span className="text-[10px] font-medium">Search</span>
+        </button>
+        <button
+          onClick={() => { setActiveTab("settings"); setSelectedChat(null); }}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "settings" ? "text-purple-400" : "text-zinc-500"}`}
+        >
+          <Settings size={22} />
+          <span className="text-[10px] font-medium">Settings</span>
+        </button>
+        <div className="relative flex flex-col items-center gap-1">
+          <img src={user.photoURL} alt="" className="h-7 w-7 rounded-full border border-white/10" />
+          <span className={`absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-black ${socketConnected ? "bg-green-400" : "bg-orange-400 animate-pulse"}`} />
+          <span className="text-[10px] font-medium text-zinc-500">Me</span>
+        </div>
+      </nav>
       <AnimatePresence>
         {callState && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -436,7 +567,7 @@ export default function Dashboard() {
                 className={`absolute inset-0 w-full h-full object-cover ${callState !== "connected" || isAudioOnly ? "hidden" : ""}`} />
 
               {/* Center placeholder */}
-              {(isAudioOnly || callState !== "connected") && (
+              {(isAudioOnly || (callState !== "connected" && callState !== "connecting")) && (
                 <div className="flex flex-col items-center gap-4 z-10 text-center px-6">
                   <div className="w-24 h-24 md:w-32 md:h-32 rounded-full overflow-hidden border-4 border-white/10 ring-4 ring-purple-500/30">
                     <img src={callTarget?.photoURL || `https://ui-avatars.com/api/?name=${callTarget?.name}&background=random`} alt="" className="w-full h-full object-cover" />
@@ -445,6 +576,7 @@ export default function Dashboard() {
                   <div className="flex items-center gap-2 text-zinc-400 text-sm">
                     {callState === "calling" && <><span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" /> Ringing...</>}
                     {callState === "incoming" && <><span className="h-2 w-2 rounded-full bg-yellow-400 animate-pulse" /> Incoming {isAudioOnly ? "Voice" : "Video"} Call</>}
+                    {callState === "connecting" && <><span className="h-2 w-2 rounded-full bg-yellow-400 animate-pulse" /> Connecting...</>}
                     {callState === "connected" && isAudioOnly && <><span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" /> Call Connected</>}
                   </div>
                 </div>

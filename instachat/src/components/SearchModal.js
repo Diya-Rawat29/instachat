@@ -74,12 +74,12 @@ export default function SearchModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm">
       <motion.div 
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
-        className="w-full max-w-md rounded-3xl border border-white/10 bg-[#121214] p-8 shadow-2xl"
+        className="w-full max-w-md rounded-t-3xl sm:rounded-3xl border border-white/10 bg-[#121214] p-6 sm:p-8 shadow-2xl"
       >
         <div className="mb-6 flex items-center justify-between">
           <h2 className="text-xl font-bold">Find Friends</h2>
@@ -101,7 +101,7 @@ export default function SearchModal({ isOpen, onClose }) {
           {loading && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-purple-500" size={18} />}
         </form>
 
-        <div className="space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar">
+        <div className="space-y-4 max-h-[40vh] sm:max-h-[300px] overflow-y-auto custom-scrollbar">
           {results.length > 0 ? (
             results.map((res) => (
               <div key={res.uid} className="flex items-center justify-between rounded-2xl bg-white/5 p-4 border border-transparent hover:border-white/5 transition-all">

@@ -16,6 +16,14 @@ export const metadata = {
   description: "Real-time Social Chat App (WhatsApp + Instagram style)",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+};
+
 import { AuthProvider } from "@/context/AuthContext";
 
 export default function RootLayout({ children }) {
