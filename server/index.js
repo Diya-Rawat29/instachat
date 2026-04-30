@@ -310,7 +310,7 @@ app.patch('/api/rooms/:roomId', async (req, res) => {
 // ══════════════════════════════════════════════════════
 const server = http.createServer(app);
 const io     = new Server(server, {
-  cors: { origin: ALLOWED_ORIGIN, methods: ['GET', 'POST'] }
+  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] }
 });
 
 let onlineUsers = new Map(); // uid → socketId
