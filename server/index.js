@@ -7,12 +7,31 @@ require('dotenv').config();
 
 const { User, Request, Message, Room } = require('./models');
 
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
-const MONGO_URI      = process.env.MONGO_URI || 'mongodb://localhost:27017/instachat';
+const ALLOWED_ORIGINS = [
+  'https://instachat-nu.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  ...(process.env.ALLOWED_ORIGIN && process.env.ALLOWED_ORIGIN !== '*'
+    ? [process.env.ALLOWED_ORIGIN]
+    : []),
+];
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/instachat';
 
 // ── Express setup ─────────────────────────────────────
 const app = express();
-app.use(cors({ origin: ALLOWED_ORIGIN }));
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (Postman, mobile apps, server-to-server)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS blocked: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Handle preflight for all routes
 app.use(express.json());
 
 // ── MongoDB connect ───────────────────────────────────
