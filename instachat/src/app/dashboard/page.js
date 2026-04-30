@@ -16,18 +16,25 @@ const SOCKET_SERVER = process.env.NEXT_PUBLIC_SOCKET_SERVER_URL || "http://local
 
 const ICE_SERVERS = {
   iceServers: [
+    // Google STUN pool
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun3.l.google.com:19302" },
-    { urls: "stun:stun4.l.google.com:19302" },
-    // Free TURN from open-relay (fallback for symmetric NAT)
-    { urls: "turn:openrelay.metered.ca:80",            username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443",           username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:80?transport=udp",  username: "openrelayproject", credential: "openrelayproject" },
+    // Cloudflare STUN (very reliable)
+    { urls: "stun:stun.cloudflare.com:3478" },
+    // ExpressTURN — free, reliable 24/7 public TURN
+    {
+      urls: "turn:relay1.expressturn.com:3478",
+      username: "efVQFDZCRD2XZWDWC2",
+      credential: "u3IlkTJPWmNHFX9Z",
+    },
+    // OpenRelay as secondary fallback
+    { urls: "turn:openrelay.metered.ca:80",              username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443",             username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp",username: "openrelayproject", credential: "openrelayproject" },
   ],
   iceCandidatePoolSize: 10,
+  iceTransportPolicy: "all",  // try direct (STUN) first, TURN as fallback
 };
 
 export default function Dashboard() {
@@ -71,6 +78,8 @@ export default function Dashboard() {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const cleanupCallRef = useRef(null);       // stable ref to avoid stale closures
+  const callTimeoutRef = useRef(null);       // auto-cancel if no answer in 30s
+  const iceRestartCount = useRef(0);         // limit ICE restart attempts
 
   useEffect(() => { callStateRef.current = callState; }, [callState]);
 
@@ -154,7 +163,13 @@ export default function Dashboard() {
       }
     });
 
-    sock.on("call-ended", () => cleanupCallRef.current?.());
+    sock.on("call-ended",   () => cleanupCallRef.current?.());
+    sock.on("call-rejected", () => {
+      cleanupCallRef.current?.();
+    });
+    sock.on("call-busy", () => {
+      cleanupCallRef.current?.();
+    });
 
     // ── In-app + browser notifications ──────────────────
     sock.on("message-received", ({ senderId, roomId: msgRoomId }) => {
@@ -271,10 +286,17 @@ export default function Dashboard() {
       console.log("[ICE] Connection state:", pc.iceConnectionState);
       if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
         setCallState("connected");
+        iceRestartCount.current = 0; // reset on success
       }
       if (pc.iceConnectionState === "failed") {
-        console.warn("[ICE] Failed — attempting ICE restart");
-        pc.restartIce();
+        if (iceRestartCount.current < 3) {
+          iceRestartCount.current++;
+          console.warn(`[ICE] Failed — attempting ICE restart #${iceRestartCount.current}`);
+          pc.restartIce();
+        } else {
+          console.error("[ICE] Giving up after 3 restart attempts");
+          cleanupCallRef.current?.();
+        }
       }
       if (pc.iceConnectionState === "disconnected") {
         // Give a moment before cleanup (could be transient)
@@ -315,7 +337,16 @@ export default function Dashboard() {
     setCallState("calling");
     pendingIceCandidates.current = [];
     pendingOfferSdp.current = null;
+    iceRestartCount.current = 0;
     sendSystemMsg(chat, isVideo ? "🎥 Video Call Started" : "📞 Voice Call Started");
+
+    // Auto-cancel if no answer in 30 seconds
+    callTimeoutRef.current = setTimeout(() => {
+      if (callStateRef.current === "calling") {
+        socketRef.current?.emit("call-ended", { to: chat.uid });
+        cleanupCallRef.current?.();
+      }
+    }, 30000);
 
     try {
       // Try requested constraints, fall back to audio-only if camera unavailable
@@ -418,6 +449,8 @@ export default function Dashboard() {
 
   const cleanupCall = useCallback(() => {
     console.log("[Call] Cleaning up call");
+    clearTimeout(callTimeoutRef.current);
+    callTimeoutRef.current = null;
     try { localStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
     localStreamRef.current = null;
     try { if (pcRef.current) { pcRef.current.close(); pcRef.current = null; } } catch {}
@@ -427,6 +460,7 @@ export default function Dashboard() {
     pendingOfferSdp.current = null;
     isInitiator.current = false;
     callFromRef.current = null;
+    iceRestartCount.current = 0;
     setCallState(null);
     setIsMuted(false);
     setIsVideoOff(false);
@@ -437,8 +471,13 @@ export default function Dashboard() {
   useEffect(() => { cleanupCallRef.current = cleanupCall; }, [cleanupCall]);
 
   const endCall = () => {
+    clearTimeout(callTimeoutRef.current);
     const toUid = isInitiator.current ? callTarget?.uid : callFromRef.current;
     if (toUid) socketRef.current?.emit("call-ended", { to: toUid });
+    if (callStateRef.current === "incoming") {
+      // Receiver declined
+      socketRef.current?.emit("call-rejected", { to: callFromRef.current });
+    }
     sendSystemMsg(null, "📵 Call Ended");
     cleanupCall();
   };

@@ -336,11 +336,27 @@ io.on('connection', (socket) => {
     }
   });
 
-  // WebRTC Signaling
-  socket.on('call-user',  (data) => socket.in(data.userToCall).emit('incoming-call', { signal: data.signal, from: data.from, name: data.name, callType: data.callType }));
-  socket.on('answer-call',(data) => socket.in(data.to).emit('call-accepted', { signal: data.signal }));
-  socket.on('ice-candidate',(data) => socket.in(data.to).emit('ice-candidate', { candidate: data.candidate }));
-  socket.on('call-ended', (data) => socket.in(data.to).emit('call-ended'));
+  // ── WebRTC Signaling (use io.to() not socket.in() for reliable delivery) ──
+  socket.on('call-user', (data) => {
+    io.to(data.userToCall).emit('incoming-call', {
+      signal: data.signal,
+      from: data.from,
+      name: data.name,
+      callType: data.callType,
+    });
+  });
+
+  socket.on('answer-call', (data) => {
+    io.to(data.to).emit('call-accepted', { signal: data.signal });
+  });
+
+  socket.on('ice-candidate', (data) => {
+    io.to(data.to).emit('ice-candidate', { candidate: data.candidate });
+  });
+
+  socket.on('call-ended',    (data) => io.to(data.to).emit('call-ended'));
+  socket.on('call-rejected', (data) => io.to(data.to).emit('call-rejected'));
+  socket.on('call-busy',     (data) => io.to(data.to).emit('call-busy'));
 
   socket.on('disconnect', async () => {
     console.log('User Disconnected:', socket.id);
