@@ -37,7 +37,25 @@ export default function Home() {
         await loginWithEmail(formData.email, formData.password);
       }
     } catch (err) {
-      setError(err.message.includes("auth/user-not-found") ? "Account not found." : "Invalid credentials.");
+      // Firebase SDK v9+ uses err.code (not err.message) for auth errors
+      const code = err?.code || "";
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+        setError("Incorrect email or password.");
+      } else if (code === "auth/invalid-email") {
+        setError("Please enter a valid email address.");
+      } else if (code === "auth/user-disabled") {
+        setError("This account has been disabled.");
+      } else if (code === "auth/too-many-requests") {
+        setError("Too many attempts. Please try again later.");
+      } else if (code === "auth/email-already-in-use") {
+        setError("An account with this email already exists.");
+      } else if (code === "auth/weak-password") {
+        setError("Password must be at least 6 characters.");
+      } else if (code === "auth/network-request-failed") {
+        setError("Network error. Check your connection.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
     } finally {
       setLoading(false);
     }

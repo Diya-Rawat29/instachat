@@ -1,49 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { 
-  getFirestore, 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  addDoc, 
-  serverTimestamp 
-} from "firebase/firestore";
-import { app } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
+import { searchUsers, sendRequest as apiSendRequest } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, X, UserPlus, Check, Loader2 } from "lucide-react";
 
 export default function SearchModal({ isOpen, onClose }) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [requestSent, setRequestSent] = useState({}); // {uid: true}
-  const { user, profileData } = useAuth(); // Added profileData
-  const db = getFirestore(app);
+  const [searchTerm,   setSearchTerm]   = useState("");
+  const [results,      setResults]      = useState([]);
+  const [loading,      setLoading]      = useState(false);
+  const [requestSent,  setRequestSent]  = useState({});
+  const { user, profileData } = useAuth();
 
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!searchTerm.trim()) return;
-
     setLoading(true);
     try {
-      // Check for email OR username
-      const qEmail = query(collection(db, "users"), where("email", "==", searchTerm.trim()));
-      const qUser = query(collection(db, "users"), where("username", "==", searchTerm.trim().toLowerCase()));
-      
-      const [emailSnap, userSnap] = await Promise.all([getDocs(qEmail), getDocs(qUser)]);
-      
-      const users = [];
-      const seenUids = new Set();
-
-      [...emailSnap.docs, ...userSnap.docs].forEach((doc) => {
-        if (doc.id !== user?.uid && !seenUids.has(doc.id)) {
-            users.push({ ...doc.data(), uid: doc.id }); // Ensure uid is always set from doc.id
-            seenUids.add(doc.id);
-        }
-      });
+      const users = await searchUsers(searchTerm.trim(), user.uid);
       setResults(users);
     } catch (error) {
       console.error("Search error:", error);
@@ -53,17 +28,14 @@ export default function SearchModal({ isOpen, onClose }) {
   };
 
   const sendRequest = async (receiver) => {
-    if (!receiver.uid) return console.error("Receiver UID is missing");
-
+    if (!receiver.uid) return;
     try {
-      await addDoc(collection(db, "requests"), {
-        senderId: user.uid,
-        senderName: profileData?.name || user.displayName,
-        senderPhoto: user.photoURL,
+      await apiSendRequest({
+        senderId:       user.uid,
+        senderName:     profileData?.name || user.displayName,
+        senderPhoto:    user.photoURL,
         senderUsername: profileData?.username || "",
-        receiverId: receiver.uid,
-        status: "pending",
-        createdAt: serverTimestamp()
+        receiverId:     receiver.uid,
       });
       setRequestSent(prev => ({ ...prev, [receiver.uid]: true }));
     } catch (error) {
@@ -75,7 +47,7 @@ export default function SearchModal({ isOpen, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -90,13 +62,13 @@ export default function SearchModal({ isOpen, onClose }) {
 
         <form onSubmit={handleSearch} className="relative mb-8">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
-          <input 
+          <input
             autoFocus
-            type="text" 
-            placeholder="Search by email or @username..." 
+            type="text"
+            placeholder="Search by email or @username..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-2xl bg-white/5 py-4 pl-12 pr-4 outline-none ring-1 ring-white/10 transition-focus focus:ring-purple-500"
+            className="w-full rounded-2xl bg-white/5 py-4 pl-12 pr-4 outline-none ring-1 ring-white/10 transition-all focus:ring-purple-500"
           />
           {loading && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-purple-500" size={18} />}
         </form>
@@ -109,8 +81,10 @@ export default function SearchModal({ isOpen, onClose }) {
                   <img src={res.photoURL} className="h-10 w-10 rounded-full" alt="" />
                   <div>
                     <div className="flex items-center gap-2">
-                       <p className="font-semibold text-sm">{res.name}</p>
-                       {res.username && <span className="text-[10px] bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full font-bold">@{res.username}</span>}
+                      <p className="font-semibold text-sm">{res.name}</p>
+                      {res.username && (
+                        <span className="text-[10px] bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full font-bold">@{res.username}</span>
+                      )}
                     </div>
                     <p className="text-xs text-zinc-500">{res.email}</p>
                   </div>
@@ -120,7 +94,7 @@ export default function SearchModal({ isOpen, onClose }) {
                     <Check size={20} />
                   </div>
                 ) : (
-                  <button 
+                  <button
                     onClick={() => sendRequest(res)}
                     className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-600 text-white hover:bg-purple-700 transition-all shadow-lg shadow-purple-500/20"
                   >
@@ -130,7 +104,7 @@ export default function SearchModal({ isOpen, onClose }) {
               </div>
             ))
           ) : searchTerm && !loading && (
-            <p className="text-center text-zinc-500 py-4">No users found with this email.</p>
+            <p className="text-center text-zinc-500 py-4">No users found.</p>
           )}
         </div>
       </motion.div>

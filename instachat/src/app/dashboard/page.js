@@ -4,13 +4,12 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageSquare, Phone, Users, Settings, Search, LogOut, Plus, Bell, Mic, MicOff, Video, VideoOff, PhoneOff, MonitorUp } from "lucide-react";
+import { MessageSquare, Phone, Users, Settings, Search, LogOut, Plus, Bell, Mic, MicOff, Video, VideoOff, PhoneOff, MonitorUp, Wifi } from "lucide-react";
 import SearchModal from "@/components/SearchModal";
 import ChatWindow from "@/components/ChatWindow";
 import CompleteProfileModal from "@/components/CompleteProfileModal";
 import SettingsPanel from "@/components/SettingsPanel";
-import { getFirestore, collection, onSnapshot, query, where, updateDoc, doc, getDocs, addDoc, arrayUnion, serverTimestamp } from "firebase/firestore";
-import { app } from "@/lib/firebase";
+import { getRequests, acceptRequest as apiAcceptRequest, batchUsers, getUnreadCount, sendMessage as apiSendMsg } from "@/lib/api";
 import { io } from "socket.io-client";
 
 const SOCKET_SERVER = process.env.NEXT_PUBLIC_SOCKET_SERVER_URL || "http://localhost:5000";
@@ -34,7 +33,6 @@ const ICE_SERVERS = {
 export default function Dashboard() {
   const { user, profileData, loading, logout } = useAuth();
   const router = useRouter();
-  const db = getFirestore(app);
 
   // UI state
   const [activeTab, setActiveTab] = useState("chats");
@@ -42,9 +40,14 @@ export default function Dashboard() {
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [connections, setConnections] = useState([]);
   const [selectedChat, setSelectedChat] = useState(null);
+  const [unreadCounts, setUnreadCounts] = useState({}); // uid -> count
+  const [sidebarSearch, setSidebarSearch] = useState("");
+  const [toast, setToast] = useState(null); // { name, text, photo, uid }
+  const toastTimerRef = useRef(null);
+  const selectedChatRef = useRef(null); // stable ref for socket closure
 
-  // Socket
-  const socketRef = useRef(null);
+  // Socket — tracked in state so children re-render on reconnect
+  const [socket, setSocket] = useState(null);
 
   // Call state
   const [socketConnected, setSocketConnected] = useState(false);
@@ -56,6 +59,7 @@ export default function Dashboard() {
   const [callTarget, setCallTarget] = useState(null); // who we're calling / who called us
 
   // WebRTC refs
+  const socketRef = useRef(null);            // stable ref for closures (WebRTC)
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const pendingIceCandidates = useRef([]);   // ICE only (not offer)
@@ -70,6 +74,16 @@ export default function Dashboard() {
 
   useEffect(() => { callStateRef.current = callState; }, [callState]);
 
+  // keep selectedChatRef in sync for socket closures
+  useEffect(() => { selectedChatRef.current = selectedChat; }, [selectedChat]);
+
+  // ── Request browser notification permission once ──
+  useEffect(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   // ── Redirect if logged out ──
   useEffect(() => {
     if (!loading && !user) router.push("/");
@@ -78,11 +92,19 @@ export default function Dashboard() {
   // ── Socket setup (at Dashboard level — works everywhere) ──
   useEffect(() => {
     if (!user) return;
-    const sock = io(SOCKET_SERVER, { transports: ["websocket", "polling"], reconnectionAttempts: 15, reconnectionDelay: 2000 });
+    const sock = io(SOCKET_SERVER, {
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 15,
+      reconnectionDelay: 2000,
+      autoConnect: false,   // prevent race with Fast Refresh
+    });
     socketRef.current = sock;
+    sock.connect();         // explicit connect after mount
+    setSocket(sock);
 
     const doSetup = () => {
       sock.emit("setup", { uid: user.uid, displayName: user.displayName });
+      setSocket(sock);      // re-expose after reconnect
       setSocketConnected(true);
     };
     sock.on("connect", doSetup);
@@ -134,39 +156,81 @@ export default function Dashboard() {
 
     sock.on("call-ended", () => cleanupCallRef.current?.());
 
-    return () => sock.disconnect();
+    // ── In-app + browser notifications ──────────────────
+    sock.on("message-received", ({ senderId, roomId: msgRoomId }) => {
+      // Only notify if the sender is NOT the current open chat
+      if (selectedChatRef.current?.uid === senderId) return;
+
+      // Find sender info from connections
+      setConnections(prev => {
+        const sender = prev.find(c => c.uid === senderId);
+        if (!sender) return prev;
+
+        // Bump unread count
+        setUnreadCounts(counts => ({ ...counts, [senderId]: (counts[senderId] || 0) + 1 }));
+
+        // In-app toast
+        clearTimeout(toastTimerRef.current);
+        setToast({ name: sender.name, text: "Sent you a message", photo: sender.photoURL, uid: senderId, chat: sender });
+        toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+
+        // Browser / OS notification (only when tab is hidden)
+        if (typeof Notification !== 'undefined' &&
+            Notification.permission === 'granted' &&
+            document.visibilityState === 'hidden') {
+          const n = new Notification(sender.name, {
+            body: "Sent you a message",
+            icon: sender.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(sender.name)}&background=7c3aed&color=fff`,
+            tag: senderId, // collapses duplicate notifications
+          });
+          n.onclick = () => { window.focus(); n.close(); };
+        }
+        return prev;
+      });
+    });
+
+    return () => { sock.disconnect(); setSocket(null); };
   }, [user]); // eslint-disable-line
 
-  // ── Firestore listeners ──
-  useEffect(() => {
+  // ── Poll MongoDB for requests, connections, unread counts ──
+  const fetchDashboardData = useCallback(async () => {
     if (!user) return;
-    const qReq = query(collection(db, "requests"), where("receiverId", "==", user.uid), where("status", "==", "pending"));
-    const unsubReq = onSnapshot(qReq, (snap) => {
-      const reqs = [];
-      snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+    try {
+      // 1. Pending friend requests
+      const reqs = await getRequests(user.uid);
       setIncomingRequests(reqs);
-    });
-    let unsubCons = () => {};
-    const unsubUser = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
-      const userData = docSnap.data();
-      unsubCons();
-      if (userData?.connections?.length > 0) {
-        const qCon = query(collection(db, "users"), where("uid", "in", userData.connections));
-        unsubCons = onSnapshot(qCon, (conSnap) => {
-          const cons = [];
-          conSnap.forEach(d => cons.push({ ...d.data(), uid: d.id }));
-          setConnections(cons);
-        });
-      } else setConnections([]);
-    });
-    return () => { unsubReq(); unsubUser(); unsubCons(); };
-  }, [user, db]);
+
+      // 2. Connections from profileData (kept fresh by AuthContext)
+      const connUids = profileData?.connections || [];
+      if (connUids.length > 0) {
+        const cons = await batchUsers(connUids);
+        setConnections(cons);
+        // 3. Unread counts per connection
+        const counts = {};
+        await Promise.all(cons.map(async (con) => {
+          const roomId = [user.uid, con.uid].sort().join("_");
+          const { count } = await getUnreadCount(roomId, user.uid);
+          counts[con.uid] = count;
+        }));
+        setUnreadCounts(counts);
+      } else {
+        setConnections([]);
+      }
+    } catch (err) {
+      console.error("fetchDashboardData:", err);
+    }
+  }, [user, profileData]);
+
+  useEffect(() => {
+    fetchDashboardData();
+    const interval = setInterval(fetchDashboardData, 3000);
+    return () => clearInterval(interval);
+  }, [fetchDashboardData]);
 
   const acceptRequest = async (request) => {
     try {
-      await updateDoc(doc(db, "requests", request.id), { status: "accepted" });
-      await updateDoc(doc(db, "users", user.uid), { connections: arrayUnion(request.senderId) });
-      await updateDoc(doc(db, "users", request.senderId), { connections: arrayUnion(user.uid) });
+      await apiAcceptRequest(request._id || request.id);
+      fetchDashboardData(); // refresh immediately
     } catch (error) { console.error("Accept failed:", error); }
   };
 
@@ -229,7 +293,7 @@ export default function Dashboard() {
     const chat = targetChat || selectedChat;
     if (!chat) return;
     const roomId = [user.uid, chat.uid].sort().join("_");
-    try { await addDoc(collection(db, "messages"), { roomId, senderId: user.uid, text, isSystem: true, createdAt: serverTimestamp() }); }
+    try { await apiSendMsg({ roomId, senderId: user.uid, text, isSystem: true }); }
     catch (e) { console.error(e); }
   };
 
@@ -425,33 +489,35 @@ export default function Dashboard() {
             <MessageSquare size={18} />
           </div>
           <div className="flex flex-col gap-5 items-center mt-2">
-            <NavIcon icon={<MessageSquare size={20} />} active={activeTab === "chats"} onClick={() => setActiveTab("chats")} />
+            <NavIcon icon={<MessageSquare size={20} />} active={activeTab === "chats"} onClick={() => setActiveTab("chats")}
+              badge={Object.values(unreadCounts).reduce((a, b) => a + b, 0)} />
             <NavIcon icon={<Users size={20} />} active={activeTab === "connections"} onClick={() => setActiveTab("connections")} />
+            <NavIcon icon={<Wifi size={20} />} active={activeTab === "online"} onClick={() => setActiveTab("online")} />
           </div>
         </div>
         <div className="flex flex-col gap-5 items-center">
           <NavIcon icon={<Settings size={20} />} active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
           <button onClick={logout} className="text-zinc-500 hover:text-red-500 transition-colors"><LogOut size={20} /></button>
           <div className="relative">
-            <img src={user.photoURL} alt="" className="h-8 w-8 md:h-9 md:w-9 rounded-full border border-white/10" />
+            <img src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || 'U')}&background=7c3aed&color=fff`} alt="" className="h-8 w-8 md:h-9 md:w-9 rounded-full border border-white/10" />
             <span title={socketConnected ? "Connected" : "Connecting..."} className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-black ${socketConnected ? "bg-green-400" : "bg-orange-400 animate-pulse"}`} />
           </div>
         </div>
-
       </nav>
 
       {/* Chat List Sidebar */}
       <aside className={`flex-shrink-0 flex-col border-r border-white/5 bg-[#09090b] w-full md:w-72 lg:w-80 ${(selectedChat || activeTab === "settings") ? "hidden md:flex" : "flex"}`}>
         <header className="flex flex-col p-4 gap-4 flex-shrink-0">
           <div className="flex items-center justify-between">
-            <h1 className="text-xl font-bold capitalize">{activeTab}</h1>
+            <h1 className="text-xl font-bold capitalize">{activeTab === "online" ? "Online Now" : activeTab}</h1>
             <button onClick={() => setIsSearchOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-600 hover:bg-purple-700">
               <Plus size={18} />
             </button>
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={15} />
-            <input type="text" placeholder="Search..." className="w-full rounded-xl bg-white/5 py-2.5 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-purple-500" />
+            <input type="text" placeholder="Search..." value={sidebarSearch} onChange={e => setSidebarSearch(e.target.value)}
+              className="w-full rounded-xl bg-white/5 py-2.5 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-purple-500" />
           </div>
         </header>
 
@@ -471,10 +537,14 @@ export default function Dashboard() {
             </div>
           )}
 
-          {activeTab === "chats" && connections.map(con => (
-            <ChatPreview key={con.uid} name={con.name} photo={con.photoURL} online={con.status === "online"}
-              onClick={() => setSelectedChat(con)} active={selectedChat?.uid === con.uid} />
-          ))}
+          {activeTab === "chats" && connections
+            .filter(con => !sidebarSearch || con.name?.toLowerCase().includes(sidebarSearch.toLowerCase()))
+            .map(con => (
+              <ChatPreview key={con.uid} name={con.name} photo={con.photoURL} online={con.status === "online"}
+                unread={unreadCounts[con.uid] || 0}
+                onClick={() => { setSelectedChat(con); setUnreadCounts(p => ({ ...p, [con.uid]: 0 })); }}
+                active={selectedChat?.uid === con.uid} />
+            ))}
           {activeTab === "chats" && connections.length === 0 && (
             <div className="text-center py-16 opacity-20">
               <MessageSquare className="mx-auto mb-2" size={32} />
@@ -484,14 +554,40 @@ export default function Dashboard() {
           {activeTab === "connections" && connections.map(con => (
             <div key={con.uid} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 mb-2">
               <div className="flex items-center gap-3">
-                <img src={con.photoURL} className="h-10 w-10 rounded-full" alt="" />
-                <p className="text-sm font-medium">{con.name}</p>
+                <div className="relative">
+                  <img src={con.photoURL} className="h-10 w-10 rounded-full" alt="" />
+                  {con.status === "online" && <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#09090b] bg-green-500" />}
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{con.name}</p>
+                  <p className={`text-[10px] ${con.status === "online" ? "text-green-500" : "text-zinc-500"}`}>{con.status === "online" ? "Online" : "Offline"}</p>
+                </div>
               </div>
               <button onClick={() => setSelectedChat(con)} className="text-purple-400 hover:text-purple-300">
                 <MessageSquare size={18} />
               </button>
             </div>
           ))}
+          {activeTab === "online" && (
+            connections.filter(c => c.status === "online").length === 0 ? (
+              <div className="text-center py-16 opacity-20">
+                <Wifi className="mx-auto mb-2" size={32} />
+                <p className="text-xs">No one is online</p>
+              </div>
+            ) : connections.filter(c => c.status === "online").map(con => (
+              <div key={con.uid} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 mb-2 cursor-pointer hover:bg-white/8 transition-colors"
+                onClick={() => { setSelectedChat(con); setActiveTab("chats"); }}>
+                <div className="relative">
+                  <img src={con.photoURL} className="h-11 w-11 rounded-full" alt="" />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-[#09090b] bg-green-500 animate-pulse" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">{con.name}</p>
+                  <p className="text-[10px] text-green-500">● Online now</p>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </aside>
 
@@ -502,7 +598,7 @@ export default function Dashboard() {
         ) : selectedChat ? (
           <ChatWindow
             selectedChat={selectedChat}
-            socket={socketRef.current}
+            socket={socket}
             onStartCall={(type) => initiateCall(type, selectedChat)}
             onBack={() => setSelectedChat(null)}
           />
@@ -521,36 +617,33 @@ export default function Dashboard() {
 
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around bg-black/90 backdrop-blur-xl border-t border-white/10 py-3 px-4 safe-area-bottom">
-        <button
-          onClick={() => { setActiveTab("chats"); setSelectedChat(null); }}
-          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "chats" && !selectedChat ? "text-purple-400" : "text-zinc-500"}`}
-        >
+        <button onClick={() => { setActiveTab("chats"); setSelectedChat(null); }}
+          className={`flex flex-col items-center gap-1 transition-colors relative ${activeTab === "chats" && !selectedChat ? "text-purple-400" : "text-zinc-500"}`}>
           <MessageSquare size={22} />
+          {Object.values(unreadCounts).reduce((a, b) => a + b, 0) > 0 && (
+            <span className="absolute -top-1 -right-2 h-4 min-w-4 px-1 bg-purple-600 rounded-full text-[9px] flex items-center justify-center font-bold text-white">
+              {Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
+            </span>
+          )}
           <span className="text-[10px] font-medium">Chats</span>
         </button>
-        <button
-          onClick={() => { setActiveTab("connections"); setSelectedChat(null); }}
-          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "connections" ? "text-purple-400" : "text-zinc-500"}`}
-        >
+        <button onClick={() => { setActiveTab("connections"); setSelectedChat(null); }}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "connections" ? "text-purple-400" : "text-zinc-500"}`}>
           <Users size={22} />
           <span className="text-[10px] font-medium">People</span>
         </button>
-        <button
-          onClick={() => setIsSearchOpen(true)}
-          className="flex flex-col items-center gap-1 text-zinc-500"
-        >
-          <Search size={22} />
-          <span className="text-[10px] font-medium">Search</span>
+        <button onClick={() => { setActiveTab("online"); setSelectedChat(null); }}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "online" ? "text-purple-400" : "text-zinc-500"}`}>
+          <Wifi size={22} />
+          <span className="text-[10px] font-medium">Online</span>
         </button>
-        <button
-          onClick={() => { setActiveTab("settings"); setSelectedChat(null); }}
-          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "settings" ? "text-purple-400" : "text-zinc-500"}`}
-        >
+        <button onClick={() => { setActiveTab("settings"); setSelectedChat(null); }}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === "settings" ? "text-purple-400" : "text-zinc-500"}`}>
           <Settings size={22} />
           <span className="text-[10px] font-medium">Settings</span>
         </button>
         <div className="relative flex flex-col items-center gap-1">
-          <img src={user.photoURL} alt="" className="h-7 w-7 rounded-full border border-white/10" />
+          <img src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || 'U')}&background=7c3aed&color=fff`} alt="" className="h-7 w-7 rounded-full border border-white/10" />
           <span className={`absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-black ${socketConnected ? "bg-green-400" : "bg-orange-400 animate-pulse"}`} />
           <span className="text-[10px] font-medium text-zinc-500">Me</span>
         </div>
@@ -627,21 +720,65 @@ export default function Dashboard() {
       <AnimatePresence>
         {isSearchOpen && <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />}
       </AnimatePresence>
+
+      {/* ── In-app message toast ── */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            key={toast.uid}
+            initial={{ opacity: 0, y: 24, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            onClick={() => {
+              setSelectedChat(toast.chat);
+              setActiveTab("chats");
+              setToast(null);
+              clearTimeout(toastTimerRef.current);
+            }}
+            className="fixed bottom-20 md:bottom-6 right-4 z-[400] flex items-center gap-3 bg-[#1a1a1e] border border-white/10 rounded-2xl px-4 py-3 shadow-2xl shadow-black/60 cursor-pointer hover:bg-white/5 transition-colors max-w-xs w-full"
+          >
+            <div className="relative flex-shrink-0">
+              <img
+                src={toast.photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(toast.name)}&background=7c3aed&color=fff`}
+                alt=""
+                className="h-10 w-10 rounded-full object-cover"
+              />
+              <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-purple-500 border-2 border-[#1a1a1e] animate-pulse" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-white truncate">{toast.name}</p>
+              <p className="text-xs text-zinc-400 truncate">{toast.text}</p>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); setToast(null); clearTimeout(toastTimerRef.current); }}
+              className="text-zinc-600 hover:text-white flex-shrink-0 ml-1"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function NavIcon({ icon, active, onClick }) {
+function NavIcon({ icon, active, onClick, badge }) {
   return (
     <button onClick={onClick}
       className={`relative flex h-10 w-10 md:h-12 md:w-12 items-center justify-center rounded-xl transition-all ${active ? "bg-purple-600/15 text-purple-500" : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"}`}>
       {active && <motion.div layoutId="nav-active" className="absolute left-0 h-6 w-0.5 rounded-r-full bg-purple-500" />}
       {icon}
+      {badge > 0 && (
+        <span className="absolute top-1 right-1 h-4 min-w-4 px-1 bg-purple-600 rounded-full text-[9px] flex items-center justify-center font-bold text-white">
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
     </button>
   );
 }
 
-function ChatPreview({ name, photo, online, onClick, active }) {
+function ChatPreview({ name, photo, online, onClick, active, unread }) {
   return (
     <button onClick={onClick}
       className={`flex w-full items-center gap-3 rounded-xl p-3 transition-colors ${active ? "bg-purple-600/20 ring-1 ring-purple-600/50" : "hover:bg-white/5"}`}>
@@ -650,9 +787,14 @@ function ChatPreview({ name, photo, online, onClick, active }) {
         {online && <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-[#09090b] bg-green-500" />}
       </div>
       <div className="flex-1 text-left min-w-0">
-        <h4 className="font-semibold text-sm truncate">{name}</h4>
+        <h4 className={`font-semibold text-sm truncate ${unread > 0 ? "text-white" : ""}`}>{name}</h4>
         <p className="text-xs text-zinc-500 truncate">{online ? "Online" : "Offline"}</p>
       </div>
+      {unread > 0 && (
+        <span className="flex-shrink-0 h-5 min-w-5 px-1.5 bg-purple-600 rounded-full text-[10px] flex items-center justify-center font-bold text-white">
+          {unread > 99 ? "99+" : unread}
+        </span>
+      )}
     </button>
   );
 }

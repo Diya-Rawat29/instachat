@@ -7,67 +7,358 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ═══════════════════════════════════════════════════════════
+   DESIGN TOKEN SYSTEM  (dark is default)
+   ═══════════════════════════════════════════════════════════ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces */
+  --ic-bg-base:    #09090b;
+  --ic-bg-main:    #0c0c0e;
+  --ic-bg-card:    #141416;
+  --ic-bg-nav:     #000000;
+  --ic-bg-input:   rgba(255,255,255,0.05);
+  --ic-bg-hover:   rgba(255,255,255,0.05);
+  --ic-bg-subtle:  rgba(255,255,255,0.03);
+  --ic-bg-overlay: rgba(0,0,0,0.60);
+
+  /* Borders */
+  --ic-border:       rgba(255,255,255,0.06);
+  --ic-border-md:    rgba(255,255,255,0.10);
+  --ic-border-focus: rgba(139,92,246,0.6);
+
+  /* Text */
+  --ic-text-primary:   #ffffff;
+  --ic-text-secondary: #a1a1aa;
+  --ic-text-muted:     #52525b;
+  --ic-text-placeholder: #3f3f46;
+
+  /* Message bubbles */
+  --ic-bubble-out:  #7c3aed;
+  --ic-bubble-out-text: #ffffff;
+  --ic-bubble-in:   rgba(255,255,255,0.07);
+  --ic-bubble-in-text: #e4e4e7;
+
+  /* Accents */
+  --ic-purple:  #7c3aed;
+  --ic-purple-soft: rgba(124,58,237,0.15);
+  --ic-green:   #22c55e;
+
+  /* Shadows */
+  --ic-shadow-sm:  0 1px 3px rgba(0,0,0,0.4);
+  --ic-shadow-md:  0 4px 16px rgba(0,0,0,0.5);
+  --ic-shadow-lg:  0 8px 32px rgba(0,0,0,0.6);
+
+  /* Legacy variables (kept for compat) */
+  --background: #09090b;
+  --foreground: #fafafa;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #09090b;
-    --foreground: #fafafa;
-  }
+/* ═══════════════════════════════════════════════════════════
+   LIGHT MODE TOKEN OVERRIDES
+   ═══════════════════════════════════════════════════════════ */
+html.light-mode {
+  /* Surfaces */
+  --ic-bg-base:    #f1f3fa;
+  --ic-bg-main:    #e8eaf6;
+  --ic-bg-card:    #ffffff;
+  --ic-bg-nav:     #4c1d95;
+  --ic-bg-input:   rgba(0,0,0,0.04);
+  --ic-bg-hover:   rgba(0,0,0,0.04);
+  --ic-bg-subtle:  rgba(0,0,0,0.025);
+  --ic-bg-overlay: rgba(255,255,255,0.85);
+
+  /* Borders */
+  --ic-border:       rgba(0,0,0,0.08);
+  --ic-border-md:    rgba(0,0,0,0.13);
+  --ic-border-focus: rgba(124,58,237,0.5);
+
+  /* Text */
+  --ic-text-primary:     #1e1b4b;
+  --ic-text-secondary:   #4c4880;
+  --ic-text-muted:       #7c78a8;
+  --ic-text-placeholder: #a8a4d0;
+
+  /* Message bubbles */
+  --ic-bubble-out:  #7c3aed;
+  --ic-bubble-out-text: #ffffff;
+  --ic-bubble-in:   #ffffff;
+  --ic-bubble-in-text: #1e1b4b;
+
+  /* Accents */
+  --ic-purple-soft: rgba(124,58,237,0.10);
+
+  /* Shadows */
+  --ic-shadow-sm: 0 1px 4px rgba(76,29,149,0.08);
+  --ic-shadow-md: 0 4px 16px rgba(76,29,149,0.12);
+  --ic-shadow-lg: 0 8px 32px rgba(76,29,149,0.16);
+
+  /* Legacy */
+  --background: #f1f3fa;
+  --foreground: #1e1b4b;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BASE STYLES
+   ═══════════════════════════════════════════════════════════ */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), sans-serif;
+  background: var(--ic-bg-base);
+  color: var(--ic-text-primary);
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
-/* Custom Micro-animations for InstaChat UI */
+/* ═══════════════════════════════════════════════════════════
+   IC UTILITY CLASSES  (use these instead of Tailwind hardcodes)
+   ═══════════════════════════════════════════════════════════ */
+.ic-bg-base    { background-color: var(--ic-bg-base) !important; }
+.ic-bg-main    { background-color: var(--ic-bg-main) !important; }
+.ic-bg-card    { background-color: var(--ic-bg-card) !important; }
+.ic-bg-nav     { background-color: var(--ic-bg-nav) !important; }
+.ic-bg-input   { background-color: var(--ic-bg-input) !important; }
+.ic-bg-hover:hover { background-color: var(--ic-bg-hover) !important; }
+.ic-bg-subtle  { background-color: var(--ic-bg-subtle) !important; }
+.ic-border     { border-color: var(--ic-border) !important; }
+.ic-border-md  { border-color: var(--ic-border-md) !important; }
+.ic-text       { color: var(--ic-text-primary) !important; }
+.ic-text-2     { color: var(--ic-text-secondary) !important; }
+.ic-text-muted { color: var(--ic-text-muted) !important; }
+.ic-shadow-sm  { box-shadow: var(--ic-shadow-sm); }
+.ic-shadow-md  { box-shadow: var(--ic-shadow-md); }
+.ic-shadow-lg  { box-shadow: var(--ic-shadow-lg); }
+
+/* ═══════════════════════════════════════════════════════════
+   LIGHT-MODE: MAP TAILWIND HARDCODED COLORS → TOKENS
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Backgrounds ── */
+html.light-mode .bg-\[\#09090b\]        { background-color: var(--ic-bg-base) !important; }
+html.light-mode .bg-\[\#0c0c0e\]        { background-color: var(--ic-bg-main) !important; }
+html.light-mode .bg-\[\#141416\]        { background-color: var(--ic-bg-card) !important; }
+html.light-mode .bg-\[\#1a1a1e\]        { background-color: var(--ic-bg-card) !important; }
+html.light-mode .bg-\[\#121214\]        { background-color: var(--ic-bg-card) !important; }
+
+html.light-mode .bg-black              { background-color: var(--ic-bg-nav) !important; }
+html.light-mode .bg-black\/60          { background-color: rgba(76,29,149,0.92) !important; }
+html.light-mode .bg-black\/40          { background-color: rgba(76,29,149,0.8) !important; }
+html.light-mode .bg-black\/90          { background-color: rgba(76,29,149,0.97) !important; }
+html.light-mode .bg-black\/70          { background-color: rgba(76,29,149,0.95) !important; }
+html.light-mode .bg-black\/30          { background-color: rgba(76,29,149,0.15) !important; }
+html.light-mode .bg-black\/95          { background-color: rgba(76,29,149,0.98) !important; }
+
+html.light-mode .bg-white\/5           { background-color: rgba(0,0,0,0.045) !important; }
+html.light-mode .bg-white\/8           { background-color: rgba(0,0,0,0.065) !important; }
+html.light-mode .bg-white\/\[0\.03\]   { background-color: rgba(0,0,0,0.025) !important; }
+html.light-mode .bg-white\/\[0\.02\]   { background-color: rgba(0,0,0,0.015) !important; }
+html.light-mode .bg-white\/10          { background-color: rgba(0,0,0,0.08) !important; }
+html.light-mode .bg-white\/15          { background-color: rgba(0,0,0,0.10) !important; }
+html.light-mode .bg-white\/25          { background-color: rgba(0,0,0,0.14) !important; }
+
+/* Form card (login page) */
+html.light-mode .backdrop-blur-2xl.border.border-white\/10 {
+  background: rgba(255,255,255,0.88) !important;
+  border-color: rgba(124,58,237,0.15) !important;
+  box-shadow: var(--ic-shadow-lg) !important;
+}
+
+/* ── Text ── */
+html.light-mode .text-white            { color: var(--ic-text-primary) !important; }
+html.light-mode .text-zinc-100         { color: #1e1b4b !important; }
+html.light-mode .text-zinc-200         { color: #2d2a5e !important; }
+html.light-mode .text-zinc-300         { color: #3d3a70 !important; }
+html.light-mode .text-zinc-400         { color: var(--ic-text-secondary) !important; }
+html.light-mode .text-zinc-500         { color: var(--ic-text-muted) !important; }
+html.light-mode .text-zinc-600         { color: #9896c8 !important; }
+
+/* ── Borders ── */
+html.light-mode .border-white\/5       { border-color: var(--ic-border) !important; }
+html.light-mode .border-white\/8       { border-color: rgba(0,0,0,0.09) !important; }
+html.light-mode .border-white\/10      { border-color: rgba(0,0,0,0.10) !important; }
+html.light-mode .border-white\/20      { border-color: rgba(0,0,0,0.14) !important; }
+
+/* ── Message bubbles ── */
+/* Sent message stays purple (already good) */
+/* Incoming — white card with shadow */
+html.light-mode .bg-white\/8.text-zinc-200 {
+  background-color: #ffffff !important;
+  color: #1e1b4b !important;
+  box-shadow: var(--ic-shadow-sm);
+}
+html.light-mode .rounded-tl-none {
+  box-shadow: var(--ic-shadow-sm);
+}
+
+/* ── Inputs ── */
+html.light-mode input,
+html.light-mode textarea {
+  color: var(--ic-text-primary) !important;
+  background-color: rgba(0,0,0,0.04) !important;
+}
+html.light-mode input::placeholder,
+html.light-mode textarea::placeholder {
+  color: var(--ic-text-placeholder) !important;
+}
+html.light-mode .focus\:ring-purple-500\/50:focus,
+html.light-mode .focus-within\:ring-purple-500\/50 {
+  --tw-ring-color: rgba(124,58,237,0.35) !important;
+}
+
+/* ── Nav & sidebar ── */
+/* Desktop left nav gets deep purple */
+html.light-mode nav.bg-black {
+  background: linear-gradient(180deg, #3b0764 0%, #4c1d95 100%) !important;
+}
+html.light-mode nav.bg-black button.text-zinc-500 {
+  color: rgba(255,255,255,0.55) !important;
+}
+html.light-mode nav.bg-black button.text-zinc-500:hover {
+  color: #ffffff !important;
+}
+
+/* ── Scrollbar ── */
+html.light-mode .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(124,58,237,0.18);
+  border-radius: 10px;
+}
+html.light-mode .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(124,58,237,0.35);
+}
+
+/* ── Misc hover states ── */
+html.light-mode .hover\:bg-white\/5:hover  { background-color: rgba(0,0,0,0.04) !important; }
+html.light-mode .hover\:bg-white\/8:hover  { background-color: rgba(0,0,0,0.06) !important; }
+html.light-mode .hover\:bg-white\/25:hover { background-color: rgba(0,0,0,0.10) !important; }
+
+/* Selected chat highlight */
+html.light-mode .bg-purple-600\/20        { background-color: rgba(124,58,237,0.12) !important; }
+html.light-mode .ring-purple-600\/50      { --tw-ring-color: rgba(124,58,237,0.35) !important; }
+
+/* System/call message pill */
+html.light-mode .bg-white\/5.border-white\/10 {
+  background-color: rgba(124,58,237,0.08) !important;
+  border-color: rgba(124,58,237,0.18) !important;
+}
+
+/* Pinned message bar */
+html.light-mode .bg-purple-900\/20   { background-color: rgba(124,58,237,0.08) !important; }
+html.light-mode .border-purple-500\/20 { border-color: rgba(124,58,237,0.25) !important; }
+
+/* Search bar */
+html.light-mode .bg-white\/5.rounded-xl {
+  background-color: rgba(124,58,237,0.06) !important;
+}
+
+/* Online dot border colour */
+html.light-mode .border-\[\#09090b\]    { border-color: var(--ic-bg-base) !important; }
+
+/* ── Dropdown menus / context menus ── */
+html.light-mode .bg-\[\#1a1a1e\] {
+  background-color: #ffffff !important;
+  box-shadow: 0 8px 32px rgba(76,29,149,0.18) !important;
+}
+html.light-mode .text-zinc-300.hover\:bg-white\/5 {
+  color: #1e1b4b !important;
+}
+
+/* ── Sticker picker, emoji picker ── */
+html.light-mode .bg-\[\#141416\].border-t {
+  background-color: #f8f8fd !important;
+}
+
+/* ── Call modal ── */
+html.light-mode .bg-black\/95.backdrop-blur-xl {
+  background-color: rgba(76,29,149,0.96) !important;
+}
+
+/* ── Settings card ── */
+html.light-mode .bg-white\/\[0\.03\].border-white\/8 {
+  background-color: #ffffff !important;
+  border-color: rgba(124,58,237,0.1) !important;
+  box-shadow: var(--ic-shadow-sm) !important;
+}
+
+/* ── Transition everything smoothly ── */
+html.light-mode *,
+html *[class] {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 250ms;
+  transition-timing-function: ease;
+}
+
+/* Don't animate transforms or sizes (would break animations) */
+html * {
+  transition-property: color, background-color, border-color, box-shadow;
+  transition-duration: 0ms; /* reset — only light-mode enables it */
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════ */
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
 }
-.animate-float {
-  animation: float 5s ease-in-out infinite;
-}
+.animate-float { animation: float 5s ease-in-out infinite; }
 
 @keyframes glow {
-  0%, 100% { box-shadow: 0 0 15px rgba(139, 92, 246, 0.2); }
-  50% { box-shadow: 0 0 25px rgba(139, 92, 246, 0.6); }
+  0%, 100% { box-shadow: 0 0 15px rgba(139,92,246,0.2); }
+  50%       { box-shadow: 0 0 25px rgba(139,92,246,0.6); }
 }
-.animate-glow {
-  animation: glow 3s ease-in-out infinite;
-}
+.animate-glow { animation: glow 3s ease-in-out infinite; }
 
-/* Custom Scrollbar */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
+.animate-fade-up { animation: fadeUp 0.4s ease forwards; }
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLLBAR
+   ═══════════════════════════════════════════════════════════ */
+.custom-scrollbar::-webkit-scrollbar       { width: 5px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255,255,255,0.06);
   border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255,255,255,0.12);
 }
 
-/* Hide scrollbar utility */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/* Safe area for bottom nav on notched devices */
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE HELPERS
+   ═══════════════════════════════════════════════════════════ */
+/* Safe area (iPhone notch) */
 .safe-area-bottom {
   padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+/* Full dynamic viewport height (works in mobile browsers) */
+.h-dvh  { height: 100dvh; }
+.min-h-dvh { min-height: 100dvh; }
+
+/* Touch-friendly tap targets */
+@media (max-width: 768px) {
+  button, a[role="button"] {
+    min-height: 40px;
+  }
+}
+
+/* Prevent horizontal overflow on mobile */
+@media (max-width: 640px) {
+  .max-w-\[80\%\]  { max-width: 88% !important; }
+  .max-w-\[70\%\]  { max-width: 82% !important; }
+  .max-w-\[65\%\]  { max-width: 82% !important; }
 }
