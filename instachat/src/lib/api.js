@@ -21,7 +21,8 @@ export const getUser       = (uid)        => api(`/api/users/${uid}`);
 export const updateUser    = (uid, data)  => api(`/api/users/${uid}`, { method: 'PATCH', body: JSON.stringify(data) });
 export const searchUsers   = (term, selfUid) => api(`/api/users/search/${encodeURIComponent(term)}?selfUid=${selfUid}`);
 export const checkUsername = (username)   => api(`/api/users/username/${username}`);
-export const batchUsers    = (uids)       => api('/api/users/batch', { method: 'POST', body: JSON.stringify({ uids }) });
+export const batchUsers       = (uids)       => api('/api/users/batch', { method: 'POST', body: JSON.stringify({ uids }) });
+export const getRecommendations = (uid)      => api(`/api/users/recommendations/${uid}`);
 
 // ── Requests ───────────────────────────────────────────
 export const getRequests   = (uid)  => api(`/api/requests/${uid}`);

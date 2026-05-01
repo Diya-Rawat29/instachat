@@ -123,6 +123,47 @@ app.post('/api/users/batch', async (req, res) => {
   }
 });
 
+// Get recommended users (mutual connections + random)
+app.get('/api/users/recommendations/:uid', async (req, res) => {
+  try {
+    const uid = req.params.uid;
+    const currentUser = await User.findOne({ uid });
+    if (!currentUser) return res.status(404).json({ error: 'User not found' });
+
+    const currentConns = currentUser.connections || [];
+    const excludeUids = [...currentConns, uid];
+    
+    // 1. Try to find users who share connections (Mutual Friends)
+    let recommendations = await User.aggregate([
+      { $match: { uid: { $nin: excludeUids } } },
+      { $addFields: { 
+          mutualCount: { 
+            $size: { $setIntersection: [ { $ifNull: ["$connections", []] }, currentConns ] } 
+          }
+      }},
+      { $match: { mutualCount: { $gt: 0 } } },
+      { $sort: { mutualCount: -1 } },
+      { $limit: 5 }
+    ]);
+    
+    // 2. Pad with random users if needed
+    if (recommendations.length < 5) {
+      const needed = 5 - recommendations.length;
+      const recUids = recommendations.map(r => r.uid);
+      const randomUsers = await User.aggregate([
+        { $match: { uid: { $nin: [...excludeUids, ...recUids] } } },
+        { $sample: { size: needed } },
+        { $addFields: { mutualCount: 0 } }
+      ]);
+      recommendations = [...recommendations, ...randomUsers];
+    }
+    
+    res.json(recommendations);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Generic /:uid catch-all — MUST come after all specific /users/* routes
 // Get current user profile
 app.get('/api/users/:uid', async (req, res) => {

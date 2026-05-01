@@ -2,16 +2,36 @@
 
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { searchUsers, sendRequest as apiSendRequest } from "@/lib/api";
+import { searchUsers, sendRequest as apiSendRequest, getRecommendations } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, X, UserPlus, Check, Loader2 } from "lucide-react";
+import { Search, X, UserPlus, Check, Loader2, Users } from "lucide-react";
+import { useEffect } from "react";
 
 export default function SearchModal({ isOpen, onClose }) {
   const [searchTerm,   setSearchTerm]   = useState("");
   const [results,      setResults]      = useState([]);
   const [loading,      setLoading]      = useState(false);
   const [requestSent,  setRequestSent]  = useState({});
+  const [recommendations, setRecommendations] = useState([]);
+  const [loadingRecs, setLoadingRecs] = useState(false);
   const { user, profileData } = useAuth();
+
+  useEffect(() => {
+    if (isOpen && user?.uid && !searchTerm) {
+      const loadRecs = async () => {
+        setLoadingRecs(true);
+        try {
+          const recs = await getRecommendations(user.uid);
+          setRecommendations(recs);
+        } catch (error) {
+          console.error("Failed to load recommendations:", error);
+        } finally {
+          setLoadingRecs(false);
+        }
+      };
+      loadRecs();
+    }
+  }, [isOpen, user, searchTerm]);
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -74,7 +94,51 @@ export default function SearchModal({ isOpen, onClose }) {
         </form>
 
         <div className="space-y-4 max-h-[40vh] sm:max-h-[300px] overflow-y-auto custom-scrollbar">
-          {results.length > 0 ? (
+          {!searchTerm ? (
+            <div className="space-y-4">
+              <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                <Users size={16} /> Suggested People
+              </h3>
+              {loadingRecs ? (
+                <div className="flex justify-center py-8"><Loader2 className="animate-spin text-purple-500" /></div>
+              ) : recommendations.length > 0 ? (
+                recommendations.map((res) => (
+                  <div key={res.uid} className="flex items-center justify-between rounded-2xl bg-white/5 p-4 border border-transparent hover:border-white/5 transition-all">
+                    <div className="flex items-center gap-3">
+                      <img src={res.photoURL} className="h-10 w-10 rounded-full" alt="" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-sm">{res.name}</p>
+                          {res.username && (
+                            <span className="text-[10px] bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full font-bold">@{res.username}</span>
+                          )}
+                        </div>
+                        {res.mutualCount > 0 ? (
+                          <p className="text-xs text-purple-400 font-medium mt-0.5">{res.mutualCount} mutual connection{res.mutualCount > 1 ? 's' : ''}</p>
+                        ) : (
+                          <p className="text-xs text-zinc-500 mt-0.5">{res.email}</p>
+                        )}
+                      </div>
+                    </div>
+                    {requestSent[res.uid] ? (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10 text-green-500">
+                        <Check size={20} />
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => sendRequest(res)}
+                        className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-600 text-white hover:bg-purple-700 transition-all shadow-lg shadow-purple-500/20"
+                      >
+                        <UserPlus size={20} />
+                      </button>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <p className="text-center text-zinc-500 py-4">No suggestions available.</p>
+              )}
+            </div>
+          ) : results.length > 0 ? (
             results.map((res) => (
               <div key={res.uid} className="flex items-center justify-between rounded-2xl bg-white/5 p-4 border border-transparent hover:border-white/5 transition-all">
                 <div className="flex items-center gap-3">
@@ -103,7 +167,7 @@ export default function SearchModal({ isOpen, onClose }) {
                 )}
               </div>
             ))
-          ) : searchTerm && !loading && (
+          ) : !loading && (
             <p className="text-center text-zinc-500 py-4">No users found.</p>
           )}
         </div>
