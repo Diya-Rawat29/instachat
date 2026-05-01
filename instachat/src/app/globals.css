@@ -105,7 +105,7 @@ html.light-mode {
 }
 
 html {
-  scroll-behavior: smooth;
+  /* scroll-behavior: smooth; removed to fix Next.js console warning */
 }
 
 body {

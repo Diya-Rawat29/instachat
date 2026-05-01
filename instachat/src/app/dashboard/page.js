@@ -9,7 +9,7 @@ import SearchModal from "@/components/SearchModal";
 import ChatWindow from "@/components/ChatWindow";
 import CompleteProfileModal from "@/components/CompleteProfileModal";
 import SettingsPanel from "@/components/SettingsPanel";
-import { getRequests, acceptRequest as apiAcceptRequest, batchUsers, getUnreadCount, sendMessage as apiSendMsg } from "@/lib/api";
+import { getRequests, acceptRequest as apiAcceptRequest, batchUsers, getUnreadCount, sendMessage as apiSendMsg, getUser } from "@/lib/api";
 import { io } from "socket.io-client";
 
 const SOCKET_SERVER = process.env.NEXT_PUBLIC_SOCKET_SERVER_URL || "http://localhost:5000";
@@ -108,7 +108,11 @@ export default function Dashboard() {
       autoConnect: false,   // prevent race with Fast Refresh
     });
     socketRef.current = sock;
-    sock.connect();         // explicit connect after mount
+    // Delay initial connect to give backend time to start up when run via ru.bat
+    // This prevents the scary red 'WebSocket closed' error in the console.
+    const connectTimer = setTimeout(() => {
+      sock.connect();
+    }, 1000);
     setSocket(sock);
 
     const doSetup = () => {
@@ -204,7 +208,7 @@ export default function Dashboard() {
       });
     });
 
-    return () => { sock.disconnect(); setSocket(null); };
+    return () => { clearTimeout(connectTimer); sock.disconnect(); setSocket(null); };
   }, [user]); // eslint-disable-line
 
   // ── Poll MongoDB for requests, connections, unread counts ──
@@ -215,8 +219,10 @@ export default function Dashboard() {
       const reqs = await getRequests(user.uid);
       setIncomingRequests(reqs);
 
-      // 2. Connections from profileData (kept fresh by AuthContext)
-      const connUids = profileData?.connections || [];
+      // 2. Fetch fresh profile to get latest connections array
+      const freshProfile = await getUser(user.uid);
+      const connUids = freshProfile?.connections || [];
+      
       if (connUids.length > 0) {
         const cons = await batchUsers(connUids);
         setConnections(cons);
@@ -234,7 +240,7 @@ export default function Dashboard() {
     } catch (err) {
       console.error("fetchDashboardData:", err);
     }
-  }, [user, profileData]);
+  }, [user]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -565,7 +571,7 @@ export default function Dashboard() {
             <div className="mb-4">
               <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-2 flex items-center gap-1 px-1"><Bell size={11} /> Requests</p>
               {incomingRequests.map(req => (
-                <div key={req.id} className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5 mb-2">
+                <div key={req._id || req.id} className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5 mb-2">
                   <div className="flex items-center gap-2">
                     <img src={req.senderPhoto} className="h-8 w-8 rounded-full" alt="" />
                     <p className="text-xs font-medium">{req.senderName?.split(' ')[0]}</p>

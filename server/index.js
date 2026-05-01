@@ -51,13 +51,32 @@ app.post('/api/users', async (req, res) => {
   try {
     const { uid, name, email, photoURL } = req.body;
     if (!uid) return res.status(400).json({ error: 'uid required' });
-    const user = await User.findOneAndUpdate(
-      { uid },
-      { $setOnInsert: { uid, name, email, photoURL } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    
+    let user;
+    try {
+      user = await User.findOneAndUpdate(
+        { uid },
+        { $setOnInsert: { uid, name, email, photoURL } },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    } catch (upsertErr) {
+      if (upsertErr.code === 11000 && email) {
+        // If duplicate key error (e.g. email exists with different uid)
+        // Update the existing document with the new uid
+        user = await User.findOneAndUpdate(
+          { email },
+          { $set: { uid, name, photoURL } },
+          { new: true }
+        );
+        if (!user) throw upsertErr;
+      } else {
+        throw upsertErr;
+      }
+    }
+    
     res.json(user);
   } catch (err) {
+    console.error("Error in /api/users:", err);
     res.status(500).json({ error: err.message });
   }
 });

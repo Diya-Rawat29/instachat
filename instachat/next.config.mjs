@@ -25,7 +25,7 @@ const nextConfig = {
           {
             // Required for Firebase signInWithPopup — allows popup window.closed check
             key: 'Cross-Origin-Opener-Policy',
-            value: 'same-origin-allow-popups',
+            value: 'unsafe-none',
           },
         ],
       },
