@@ -102,8 +102,8 @@ export default function SearchModal({ isOpen, onClose }) {
               {loadingRecs ? (
                 <div className="flex justify-center py-8"><Loader2 className="animate-spin text-purple-500" /></div>
               ) : recommendations.length > 0 ? (
-                recommendations.map((res) => (
-                  <div key={res.uid} className="flex items-center justify-between rounded-2xl bg-white/5 p-4 border border-transparent hover:border-white/5 transition-all">
+                recommendations.map((res, index) => (
+                  <div key={res.uid || res._id || index} className="flex items-center justify-between rounded-2xl bg-white/5 p-4 border border-transparent hover:border-white/5 transition-all">
                     <div className="flex items-center gap-3">
                       <img src={res.photoURL} className="h-10 w-10 rounded-full" alt="" />
                       <div>
@@ -139,8 +139,8 @@ export default function SearchModal({ isOpen, onClose }) {
               )}
             </div>
           ) : results.length > 0 ? (
-            results.map((res) => (
-              <div key={res.uid} className="flex items-center justify-between rounded-2xl bg-white/5 p-4 border border-transparent hover:border-white/5 transition-all">
+            results.map((res, index) => (
+              <div key={res.uid || res._id || index} className="flex items-center justify-between rounded-2xl bg-white/5 p-4 border border-transparent hover:border-white/5 transition-all">
                 <div className="flex items-center gap-3">
                   <img src={res.photoURL} className="h-10 w-10 rounded-full" alt="" />
                   <div>
