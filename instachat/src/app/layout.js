@@ -14,6 +14,7 @@ const geistMono = Geist_Mono({
 export const metadata = {
   title: "InstaChat",
   description: "Real-time Social Chat App (WhatsApp + Instagram style)",
+  manifest: "/manifest.json",
 };
 
 export const viewport = {
