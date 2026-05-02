@@ -1,3 +1,5 @@
+import withPWA from 'next-pwa';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
@@ -19,11 +21,9 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Apply to all routes
         source: '/(.*)',
         headers: [
           {
-            // Required for Firebase signInWithPopup — allows popup window.closed check
             key: 'Cross-Origin-Opener-Policy',
             value: 'unsafe-none',
           },
@@ -33,4 +33,10 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default withPWA({
+  dest: 'public',
+  register: true,
+  skipWaiting: true,
+  disable: process.env.NODE_ENV === 'development',
+})(nextConfig);
+
