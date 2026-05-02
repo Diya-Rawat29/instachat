@@ -81,6 +81,11 @@ export default function Dashboard() {
   const callTimeoutRef = useRef(null);       // auto-cancel if no answer in 30s
   const iceRestartCount = useRef(0);         // limit ICE restart attempts
 
+  // Audio refs
+  const ringtoneRef = useRef(null);
+  const ringingRef = useRef(null);
+  const notificationRef = useRef(null);
+
   useEffect(() => { callStateRef.current = callState; }, [callState]);
 
   // keep selectedChatRef in sync for socket closures
@@ -177,6 +182,12 @@ export default function Dashboard() {
 
     // ── In-app + browser notifications ──────────────────
     sock.on("message-received", ({ senderId, roomId: msgRoomId }) => {
+      // Play notification sound
+      if (notificationRef.current) {
+        notificationRef.current.currentTime = 0;
+        notificationRef.current.play().catch(() => {});
+      }
+
       // Only notify if the sender is NOT the current open chat
       if (selectedChatRef.current?.uid === senderId) return;
 
@@ -358,12 +369,13 @@ export default function Dashboard() {
       // Try requested constraints, fall back to audio-only if camera unavailable
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const constraints = {
           video: isVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } : false,
           audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 },
-        });
-      } catch {
-        console.warn("[Media] Falling back to audio-only");
+        };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        console.warn("[Media] Initial getUserMedia failed, trying fallback:", err);
         stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
         setIsAudioOnly(true);
       }
@@ -412,12 +424,13 @@ export default function Dashboard() {
       const isVideo = callTypeRef.current === "video";
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const constraints = {
           video: isVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } : false,
           audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 },
-        });
-      } catch {
-        console.warn("[Media] Falling back to audio-only");
+        };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        console.warn("[Media] Fallback to audio-only on accept:", err);
         stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
         setIsAudioOnly(true);
       }
@@ -515,6 +528,23 @@ export default function Dashboard() {
     } catch { console.log("Screen share cancelled"); }
   };
 
+  // ── Audio control side effect ──
+  useEffect(() => {
+    if (callState === "incoming") {
+      ringtoneRef.current?.play().catch(() => {});
+    } else {
+      ringtoneRef.current?.pause();
+      if (ringtoneRef.current) ringtoneRef.current.currentTime = 0;
+    }
+
+    if (callState === "calling") {
+      ringingRef.current?.play().catch(() => {});
+    } else {
+      ringingRef.current?.pause();
+      if (ringingRef.current) ringingRef.current.currentTime = 0;
+    }
+  }, [callState]);
+
   if (loading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#09090b]">
@@ -524,8 +554,13 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="flex h-[100dvh] bg-[#09090b] text-white overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#09090b] text-white overflow-hidden selection:bg-purple-500/30">
       {!profileData?.username && <CompleteProfileModal />}
+
+      {/* Audio assets */}
+      <audio ref={ringtoneRef} src="https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3" loop />
+      <audio ref={ringingRef} src="https://assets.mixkit.co/active_storage/sfx/1358/1358-preview.mp3" loop />
+      <audio ref={notificationRef} src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3" />
 
       {/* Nav Sidebar — hidden on mobile, visible md+ */}
       <nav className="hidden md:flex flex-shrink-0 w-14 md:w-20 flex-col items-center justify-between border-r border-white/5 bg-black py-6">
@@ -660,8 +695,8 @@ export default function Dashboard() {
         )}
       </section>
 
-      {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around bg-black/90 backdrop-blur-xl border-t border-white/10 py-3 px-4 safe-area-bottom">
+      {/* Mobile Bottom Navigation - Hidden when a chat is active */}
+      <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-50 items-center justify-around bg-black/90 backdrop-blur-xl border-t border-white/10 py-3 px-4 safe-area-bottom ${selectedChat ? "hidden" : "flex"}`}>
         <button onClick={() => { setActiveTab("chats"); setSelectedChat(null); }}
           className={`flex flex-col items-center gap-1 transition-colors relative ${activeTab === "chats" && !selectedChat ? "text-purple-400" : "text-zinc-500"}`}>
           <MessageSquare size={22} />

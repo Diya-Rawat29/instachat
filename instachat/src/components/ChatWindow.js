@@ -336,11 +336,11 @@ export default function ChatWindow({ selectedChat, socket, onStartCall, onBack }
               <ArrowLeft size={20} />
             </button>
           )}
-          <div className="relative">
+          <div className="relative flex-shrink-0">
             <img src={selectedChat.photoURL || `https://ui-avatars.com/api/?name=${selectedChat.name}&background=random`}
-              alt="" className="h-9 w-9 rounded-full object-cover" />
+              alt="" className="h-8 w-8 md:h-9 md:w-9 rounded-full object-cover" />
             {selectedChat.status === "online" && (
-              <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-black bg-green-500" />
+              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-black bg-green-500" />
             )}
           </div>
           <div>
@@ -348,11 +348,11 @@ export default function ChatWindow({ selectedChat, socket, onStartCall, onBack }
             <p className="text-xs text-green-500">{isTyping ? "typing..." : selectedChat.status === "online" ? "Online" : "Offline"}</p>
           </div>
         </div>
-        <div className="flex items-center gap-3 text-zinc-400">
-          {disappearing && <Clock size={14} className="text-yellow-500" title="Disappearing messages on" />}
-          <button onClick={() => setShowSearch(s => !s)} className="hover:text-white transition-colors"><Search size={18} /></button>
-          <button onClick={() => onStartCall?.("audio")} className="hover:text-white transition-colors"><Phone size={18} /></button>
-          <button onClick={() => onStartCall?.("video")} className="hover:text-white transition-colors"><Video size={18} /></button>
+        <div className="flex items-center gap-2 md:gap-3 text-zinc-400">
+          {disappearing && <Clock size={14} className="text-yellow-500 hidden sm:block" title="Disappearing messages on" />}
+          <button onClick={() => setShowSearch(s => !s)} className="p-1 hover:text-white transition-colors"><Search size={18} /></button>
+          <button onClick={() => onStartCall?.("audio")} className="p-1 hover:text-white transition-colors"><Phone size={18} /></button>
+          <button onClick={() => onStartCall?.("video")} className="p-1 hover:text-white transition-colors"><Video size={18} /></button>
           <div className="relative" ref={menuRef}>
             <button onClick={() => setShowMenu(s => !s)} className="hover:text-white transition-colors"><MoreVertical size={18} /></button>
             <AnimatePresence>
@@ -526,17 +526,17 @@ export default function ChatWindow({ selectedChat, socket, onStartCall, onBack }
 
       {/* Input */}
       {!isBlocked && (
-        <footer className="bg-black/60 backdrop-blur-md p-3 flex-shrink-0 border-t border-white/5">
-          <form onSubmit={sendMessage} className="flex items-center gap-2 rounded-2xl bg-white/5 p-2 pr-3 focus-within:ring-1 focus-within:ring-purple-500/50">
+        <footer className="bg-black/60 backdrop-blur-md p-2 md:p-3 flex-shrink-0 border-t border-white/5 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] md:pb-3">
+          <form onSubmit={sendMessage} className="flex items-center gap-2 rounded-2xl bg-white/5 p-1.5 md:p-2 pr-3 focus-within:ring-1 focus-within:ring-purple-500/50">
             <button type="button" onClick={() => setShowStickers(s => !s)}
-              className={`p-2 transition-colors ${showStickers ? "text-yellow-400" : "text-zinc-500 hover:text-white"}`}>
+              className={`p-1.5 md:p-2 transition-colors ${showStickers ? "text-yellow-400" : "text-zinc-500 hover:text-white"}`}>
               <Smile size={20} />
             </button>
             <input ref={inputRef} type="text" placeholder="Type a message..."
               value={newMessage} onChange={handleTyping}
-              className="flex-1 bg-transparent py-2 px-1 text-sm outline-none placeholder:text-zinc-600 text-white" />
+              className="flex-1 bg-transparent py-2 px-1 text-sm outline-none placeholder:text-zinc-600 text-white min-w-0" />
             <button type="submit" disabled={!newMessage.trim()}
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 transition-all">
+              className="flex h-8 w-8 md:h-9 md:w-9 items-center justify-center rounded-xl bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 transition-all flex-shrink-0">
               <Send size={16} />
             </button>
           </form>
