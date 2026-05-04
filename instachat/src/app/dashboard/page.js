@@ -110,37 +110,56 @@ export default function Dashboard() {
 
     const setupNotifications = async () => {
       try {
+        console.log("Starting notification setup...");
+        
         // 1. Request permission
         const permission = await Notification.requestPermission();
+        console.log("Permission status:", permission);
+        
         if (permission !== 'granted') {
           console.warn("🔔 Notification permission denied");
           return;
         }
 
-        // 2. Get FCM Token
-        if (messaging) {
-          const token = await getToken(messaging, { vapidKey: VAPID_PUBLIC_KEY });
-          if (token) {
-            console.log("✅ FCM Token:", token);
-            // Alert for debugging on phone
-            if (process.env.NODE_ENV === 'production' || true) { // temporary true for debugging
-               alert("Notifications Setup Successful! ✅");
+        // 2. Register Service Worker explicitly (Critical for some mobile browsers)
+        if ('serviceWorker' in navigator) {
+          const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+          console.log("✅ SW Registered for FCM");
+
+          // 3. Get FCM Token
+          if (messaging) {
+            const token = await getToken(messaging, { 
+              vapidKey: VAPID_PUBLIC_KEY,
+              serviceWorkerRegistration: registration
+            });
+            
+            if (token) {
+              console.log("✅ FCM Token:", token);
+              alert("FCM Token Generated! ✅");
+              
+              const subscription = { fcmToken: token, type: 'fcm' };
+              await subscribeToPush(user.uid, subscription).catch(e => {
+                console.error("Push subscribe error:", e);
+                alert("Server registration failed ❌");
+              });
+            } else {
+              alert("No token received ❌");
             }
-            // We'll wrap the token in the same structure our backend expects
-            const subscription = { fcmToken: token, type: 'fcm' };
-            await subscribeToPush(user.uid, subscription).catch(e => console.error("Push subscribe error:", e));
+          } else {
+            alert("Messaging not initialized ❌");
           }
+        } else {
+          alert("Service Workers not supported ❌");
         }
 
-        // 3. Listen for foreground messages
+        // Listen for foreground messages
         onMessage(messaging, (payload) => {
           console.log("📨 Foreground Message Received:", payload);
-          // In-app notifications are already handled by Socket.io, 
-          // but we can add more logic here if needed.
         });
 
       } catch (err) {
         console.error("❌ Notification setup failed:", err);
+        alert("Setup Error: " + err.message);
       }
     };
 
