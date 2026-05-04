@@ -4,11 +4,19 @@ const { Server } = require('socket.io');
 const cors       = require('cors');
 const mongoose   = require('mongoose');
 const webpush    = require('web-push');
-const admin      = require('firebase-admin');
-const serviceAccount = require('./serviceAccountKey.json');
-require('dotenv').config();
-
 // Firebase Admin Setup
+let serviceAccount;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  } catch (e) {
+    console.error("❌ Failed to parse FIREBASE_SERVICE_ACCOUNT env var:", e);
+    serviceAccount = require('./serviceAccountKey.json');
+  }
+} else {
+  serviceAccount = require('./serviceAccountKey.json');
+}
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
