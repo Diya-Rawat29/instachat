@@ -40,3 +40,5 @@ export const getUnreadCount   = (roomId, uid)        => api(`/api/messages/unrea
 // ── Rooms ──────────────────────────────────────────────
 export const getRoom    = (roomId)       => api(`/api/rooms/${roomId}`);
 export const updateRoom = (roomId, data) => api(`/api/rooms/${roomId}`, { method: 'PATCH', body: JSON.stringify(data) });
+// ── Push ──────────────────────────────────────────────
+export const subscribeToPush = (uid, subscription) => api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ uid, subscription }) });

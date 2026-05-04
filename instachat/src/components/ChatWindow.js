@@ -211,6 +211,8 @@ export default function ChatWindow({ selectedChat, socket, onStartCall, onBack }
         senderId:  user.uid,
         receiverId: selectedChat.uid,
         messageId: msg._id,
+        text: msg.text,
+        isSticker: msg.isSticker,
       });
       loadMessages();
     } catch (err) {

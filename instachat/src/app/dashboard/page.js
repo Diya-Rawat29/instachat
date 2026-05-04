@@ -9,10 +9,23 @@ import SearchModal from "@/components/SearchModal";
 import ChatWindow from "@/components/ChatWindow";
 import CompleteProfileModal from "@/components/CompleteProfileModal";
 import SettingsPanel from "@/components/SettingsPanel";
-import { getRequests, acceptRequest as apiAcceptRequest, batchUsers, getUnreadCount, sendMessage as apiSendMsg, getUser } from "@/lib/api";
+import { getRequests, acceptRequest as apiAcceptRequest, batchUsers, getUnreadCount, sendMessage as apiSendMsg, getUser, subscribeToPush } from "@/lib/api";
+import { messaging, getToken, onMessage } from "@/lib/firebase";
 import { io } from "socket.io-client";
 
 const SOCKET_SERVER = process.env.NEXT_PUBLIC_SOCKET_SERVER_URL || "http://localhost:5000";
+const VAPID_PUBLIC_KEY = "BP3OnY6Jhot7hFpvRfkUuCmkLmc_7TQD6Mi3gT-k8HZN_WqbH2R221tlP3qsCRQLqLimrFVrbHdvR1nlU67cAMg";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 const ICE_SERVERS = {
   iceServers: [
@@ -91,12 +104,48 @@ export default function Dashboard() {
   // keep selectedChatRef in sync for socket closures
   useEffect(() => { selectedChatRef.current = selectedChat; }, [selectedChat]);
 
-  // ── Request browser notification permission once ──
+  // ── FCM Notification Setup ──
   useEffect(() => {
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-  }, []);
+    if (!user || typeof window === "undefined") return;
+
+    const setupNotifications = async () => {
+      try {
+        // 1. Request permission
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          console.warn("🔔 Notification permission denied");
+          return;
+        }
+
+        // 2. Get FCM Token
+        if (messaging) {
+          const token = await getToken(messaging, { vapidKey: VAPID_PUBLIC_KEY });
+          if (token) {
+            console.log("✅ FCM Token:", token);
+            // Alert for debugging on phone
+            if (process.env.NODE_ENV === 'production' || true) { // temporary true for debugging
+               alert("Notifications Setup Successful! ✅");
+            }
+            // We'll wrap the token in the same structure our backend expects
+            const subscription = { fcmToken: token, type: 'fcm' };
+            await subscribeToPush(user.uid, subscription).catch(e => console.error("Push subscribe error:", e));
+          }
+        }
+
+        // 3. Listen for foreground messages
+        onMessage(messaging, (payload) => {
+          console.log("📨 Foreground Message Received:", payload);
+          // In-app notifications are already handled by Socket.io, 
+          // but we can add more logic here if needed.
+        });
+
+      } catch (err) {
+        console.error("❌ Notification setup failed:", err);
+      }
+    };
+
+    setupNotifications();
+  }, [user]);
 
   // ── Redirect if logged out ──
   useEffect(() => {
@@ -113,11 +162,24 @@ export default function Dashboard() {
       autoConnect: false,   // prevent race with Fast Refresh
     });
     socketRef.current = sock;
+
+    // ── Unlock Audio on first click ──
+    const unlockAudio = () => {
+      if (notificationRef.current) {
+        notificationRef.current.volume = 0;
+        notificationRef.current.play().then(() => {
+          notificationRef.current.pause();
+          notificationRef.current.volume = 1;
+        }).catch(() => {});
+      }
+      window.removeEventListener("click", unlockAudio);
+    };
+    window.addEventListener("click", unlockAudio);
+
     // Delay initial connect to give backend time to start up when run via ru.bat
     // This prevents the scary red 'WebSocket closed' error in the console.
-    const connectTimer = setTimeout(() => {
-      sock.connect();
-    }, 1000);
+    // Connect immediately
+    sock.connect();
     setSocket(sock);
 
     const doSetup = () => {
@@ -125,10 +187,22 @@ export default function Dashboard() {
       setSocket(sock);      // re-expose after reconnect
       setSocketConnected(true);
     };
-    sock.on("connect", doSetup);
-    sock.on("reconnect", doSetup);
-    sock.on("disconnect", () => setSocketConnected(false));
-    sock.on("connect_error", () => setSocketConnected(false));
+    sock.on("connect", () => {
+      console.log("✅ Socket Connected:", sock.id);
+      doSetup();
+    });
+    sock.on("reconnect", () => {
+      console.log("🔄 Socket Reconnected");
+      doSetup();
+    });
+    sock.on("disconnect", (reason) => {
+      console.warn("❌ Socket Disconnected:", reason);
+      setSocketConnected(false);
+    });
+    sock.on("connect_error", (err) => {
+      console.error("⚠️ Socket Connection Error:", err.message);
+      setSocketConnected(false);
+    });
 
     sock.on("incoming-call", ({ signal, from, name, callType }) => {
       if (callStateRef.current) return; // already in a call
@@ -181,15 +255,21 @@ export default function Dashboard() {
     });
 
     // ── In-app + browser notifications ──────────────────
-    sock.on("message-received", ({ senderId, roomId: msgRoomId }) => {
+    sock.on("message-received", (payload) => {
+      const { senderId, text, isSticker } = payload;
+      console.log("📩 Message Received:", payload);
+
       // Play notification sound
       if (notificationRef.current) {
         notificationRef.current.currentTime = 0;
-        notificationRef.current.play().catch(() => {});
+        notificationRef.current.play().catch(err => console.warn("🔈 Sound play failed:", err));
       }
 
       // Only notify if the sender is NOT the current open chat
-      if (selectedChatRef.current?.uid === senderId) return;
+      if (selectedChatRef.current?.uid === senderId) {
+        console.log("ℹ️ Skipping notification: Chat is currently open");
+        return;
+      }
 
       // Find sender info from connections
       setConnections(prev => {
@@ -199,27 +279,35 @@ export default function Dashboard() {
         // Bump unread count
         setUnreadCounts(counts => ({ ...counts, [senderId]: (counts[senderId] || 0) + 1 }));
 
+        const displayMsg = isSticker ? "Sent a sticker" : text || "Sent a message";
+
         // In-app toast
         clearTimeout(toastTimerRef.current);
-        setToast({ name: sender.name, text: "Sent you a message", photo: sender.photoURL, uid: senderId, chat: sender });
+        setToast({ name: sender.name, text: displayMsg, photo: sender.photoURL, uid: senderId, chat: sender });
         toastTimerRef.current = setTimeout(() => setToast(null), 4000);
 
-        // Browser / OS notification (only when tab is hidden)
-        if (typeof Notification !== 'undefined' &&
-            Notification.permission === 'granted' &&
-            document.visibilityState === 'hidden') {
-          const n = new Notification(sender.name, {
-            body: "Sent you a message",
-            icon: sender.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(sender.name)}&background=7c3aed&color=fff`,
-            tag: senderId, // collapses duplicate notifications
-          });
-          n.onclick = () => { window.focus(); n.close(); };
+        // Browser / OS notification
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          // Only show OS notification if tab is hidden OR if tab is visible but we're not in that chat
+          const shouldNotify = document.visibilityState === 'hidden' || selectedChatRef.current?.uid !== senderId;
+          
+          if (shouldNotify) {
+            // Haptic feedback
+            if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
+
+            const n = new Notification(sender.name, {
+              body: displayMsg,
+              icon: sender.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(sender.name)}&background=7c3aed&color=fff`,
+              tag: senderId, // collapses duplicate notifications
+            });
+            n.onclick = () => { window.focus(); n.close(); };
+          }
         }
         return prev;
       });
     });
 
-    return () => { clearTimeout(connectTimer); sock.disconnect(); setSocket(null); };
+    return () => { sock.disconnect(); setSocket(null); };
   }, [user]); // eslint-disable-line
 
   // ── Poll MongoDB for requests, connections, unread counts ──
@@ -590,9 +678,27 @@ export default function Dashboard() {
         <header className="flex flex-col p-4 gap-4 flex-shrink-0">
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-bold capitalize">{activeTab === "online" ? "Online Now" : activeTab}</h1>
-            <button onClick={() => setIsSearchOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-600 hover:bg-purple-700">
-              <Plus size={18} />
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => {
+                  if (typeof Notification !== 'undefined') {
+                    if (Notification.permission === 'granted') {
+                      new Notification("InstaChat", { body: "Notifications are working! ✅", icon: "/icon-192x192.png" });
+                    } else {
+                      alert(`Notifications are ${Notification.permission}. Enable them in Settings or browser bar.`);
+                      Notification.requestPermission();
+                    }
+                  }
+                }}
+                title="Test Notification"
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400"
+              >
+                <Bell size={16} />
+              </button>
+              <button onClick={() => setIsSearchOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-600 hover:bg-purple-700">
+                <Plus size={18} />
+              </button>
+            </div>
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={15} />

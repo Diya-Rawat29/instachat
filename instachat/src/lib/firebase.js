@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
+import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 // We use environment variables to keep your keys secure
 const firebaseConfig = {
@@ -15,10 +16,14 @@ const firebaseConfig = {
 // Initialize Firebase (getApp prevents re-initialization on hot-reloads in Next.js)
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize analytics only on the client side
+// Initialize messaging and analytics only on the client side
 let analytics;
+let messaging;
+
 if (typeof window !== "undefined") {
   analytics = getAnalytics(app);
+  messaging = getMessaging(app);
 }
 
-export { app, analytics };
+export { app, analytics, messaging, getToken, onMessage };
+

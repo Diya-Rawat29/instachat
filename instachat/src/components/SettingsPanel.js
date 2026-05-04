@@ -6,7 +6,7 @@ import { updateUser } from "@/lib/api";
 import { getAuth, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from "firebase/auth";
 import { app } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
-import { User, Lock, Phone, Calendar, Save, CheckCircle2, AlertCircle, ShieldCheck, Sun, Moon, Monitor } from "lucide-react";
+import { User, Lock, Phone, Calendar, Save, CheckCircle2, AlertCircle, ShieldCheck, Sun, Moon, Monitor, Bell } from "lucide-react";
 
 export default function SettingsPanel() {
   const { user, profileData, refreshProfile } = useAuth();
@@ -140,6 +140,7 @@ export default function SettingsPanel() {
             { id: "profile",    label: "Profile",  icon: <User size={15} /> },
             { id: "security",   label: "Security", icon: <ShieldCheck size={15} /> },
             { id: "appearance", label: "Theme",    icon: <Sun size={15} /> },
+            { id: "notifications", label: "Notifications", icon: <Bell size={15} /> },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -327,6 +328,80 @@ export default function SettingsPanel() {
                   {colorMode === "system" && "Automatically follows your OS preference."}
                 </p>
               </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Notifications Tab */}
+        {activeTab === "notifications" && (
+          <motion.div key="notifications" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            <div className="bg-white/[0.03] border border-white/8 rounded-2xl overflow-hidden p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-bold text-white">Browser Notifications</h3>
+                  <p className="text-xs text-zinc-500">Enable alerts for new messages.</p>
+                </div>
+                <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                  typeof Notification === 'undefined' ? "bg-red-500/20 text-red-400"
+                  : Notification.permission === 'granted' ? "bg-green-500/20 text-green-400"
+                  : Notification.permission === 'denied' ? "bg-red-500/20 text-red-400"
+                  : "bg-yellow-500/20 text-yellow-400"
+                }`}>
+                  {typeof Notification === 'undefined' ? "Not Supported" : Notification.permission}
+                </div>
+              </div>
+
+              {!window.isSecureContext && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex gap-2 items-start">
+                  <AlertCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-red-400 leading-relaxed">
+                    <strong>Insecure Context:</strong> Notifications only work on HTTPS or localhost. 
+                    If you are using an IP address (like 192.168...), they will be blocked by the browser.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <button
+                  onClick={() => {
+                    if (typeof Notification !== 'undefined') {
+                      Notification.requestPermission().then(permission => {
+                        if (permission === 'granted') setSuccess("Notifications enabled!");
+                        else setError("Permission denied.");
+                        refreshProfile(user.uid); // just to force a re-render
+                      });
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-500 text-white py-2.5 rounded-xl font-bold text-xs transition-all"
+                >
+                  Request Permission
+                </button>
+                
+                <button
+                  onClick={() => {
+                    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                      new Notification("Test Notification", {
+                        body: "This is a test notification from InstaChat!",
+                        icon: "/icon-192x192.png"
+                      });
+                    } else {
+                      setError("Please grant permission first.");
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-zinc-300 py-2.5 rounded-xl font-bold text-xs transition-all border border-white/5"
+                >
+                  Send Test Notification
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white/[0.03] border border-white/8 rounded-2xl p-4">
+              <h3 className="text-sm font-bold text-white mb-1">Troubleshooting</h3>
+              <ul className="text-[11px] text-zinc-500 space-y-2 list-disc ml-4">
+                <li>Make sure your browser is not in "Do Not Disturb" mode.</li>
+                <li>Check your OS settings (Windows/macOS/Android) to allow browser notifications.</li>
+                <li>On iOS, you must add this app to your Home Screen to receive notifications.</li>
+              </ul>
             </div>
           </motion.div>
         )}

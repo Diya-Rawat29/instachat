@@ -14,6 +14,8 @@ const userSchema = new mongoose.Schema({
   connections: [{ type: String }],                   // array of Firebase UIDs
   isProfileComplete: { type: Boolean, default: false },
   lastSeen:    { type: Date, default: Date.now },
+  pushSubscriptions: { type: Array, default: [] },
+  fcmTokens: { type: Array, default: [] },
 }, { timestamps: true });
 
 // ── Request ───────────────────────────────────────────
